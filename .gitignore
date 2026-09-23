@@ -1,0 +1,53 @@
+# --- Project boundaries (AGENTS.md) ---
+# Datasets, checkpoints, logs, video, runs — never committed.
+data/
+# Secrets and hardware calibration — never committed.
+.env
+.env.*
+!.env.example
+*.calib
+calibration/
+# third_party/ is a git submodule (openpi); it is tracked, not ignored.
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Stray model artifacts outside data/
+*.pt
+*.pth
+*.ckpt
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

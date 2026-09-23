@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mt-rea"
+version = "0.0.0"
+description = "MT-REA — does narrow fine-tuning of a pretrained VLA on a new embodiment preserve held-out capability?"
+readme = "README.md"
+requires-python = ">=3.10"
+# LeRobot is pinned to a release tag (not PyPI latest) and openpi lives as a
+# git submodule under third_party/; neither is resolved from PyPI here. See
+# AGENTS.md "Tech stack". Exact versions / package manager (uv vs pip) TODO.
+dependencies = [
+    "torch",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools]
+packages = ["lab", "research"]
+
+[tool.pytest.ini_options]
+testpaths = ["research", "tests"]
