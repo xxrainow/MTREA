@@ -3,5 +3,5 @@
 name: push
 instruction_template: "push the {object} to the {target}"
 success_condition: "the {object} slides to the {target} location and stops there, never grasped"
-target_episodes: 15
+target_eval_trials: 30
 role: held_out

@@ -3,5 +3,5 @@
 name: open_drawer
 instruction_template: "open the {object} by pulling its {target}"
 success_condition: "the {object} is opened past its halfway point via the {target} handle"
-target_episodes: 15
+target_eval_trials: 30
 role: held_out

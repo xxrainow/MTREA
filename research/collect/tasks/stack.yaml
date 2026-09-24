@@ -1,9 +1,9 @@
 # Held-out: shares grasp+transport with pick_place but adds placement
 # precision. Tests whether that extra precision survives narrow fine-tuning.
-# Held-out tasks are eval-only, so just enough demos for a stable success-rate
-# estimate, not for training.
+# Held-out tasks are never teleop-recorded for training; success is measured by
+# autonomous rollout trials, enough for a stable success-rate estimate.
 name: stack
 instruction_template: "stack the {object} on top of the {target}"
 success_condition: "the {object} rests stably centered on the {target} without toppling"
-target_episodes: 15
+target_eval_trials: 30
 role: held_out
