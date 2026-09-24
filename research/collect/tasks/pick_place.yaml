@@ -1,0 +1,8 @@
+# The single task we actually fine-tune on (T_sub). Every other task is
+# held-out and compared against a model trained on this one, so it gets the
+# most demos. See AGENTS.md Vocabulary.
+name: pick_place
+instruction_template: "pick up the {object} and place it in the {target}"
+success_condition: "the {object} comes to rest fully inside the {target} container"
+target_episodes: 30
+role: t_sub

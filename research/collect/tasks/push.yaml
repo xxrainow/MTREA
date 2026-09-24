@@ -1,0 +1,7 @@
+# Held-out: shares no grasping motion with pick_place. Tests whether non-grasp
+# manipulation degrades differently than grasp-based skills.
+name: push
+instruction_template: "push the {object} to the {target}"
+success_condition: "the {object} slides to the {target} location and stops there, never grasped"
+target_episodes: 15
+role: held_out

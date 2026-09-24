@@ -1,0 +1,6 @@
+# Held-out: wrist-rotation-dominant, minimal overlap with pick_place.
+name: pour
+instruction_template: "pour the contents of the {object} into the {target}"
+success_condition: "the {object}'s contents end up in the {target} without spilling outside it"
+target_episodes: 15
+role: held_out
