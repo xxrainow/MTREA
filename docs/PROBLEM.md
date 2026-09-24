@@ -78,14 +78,32 @@ constraints, not to win a leaderboard.
 H0, H1, H2, … denote fine-tuning methods being compared, all trained on the same
 T_sub demos and evaluated on the same held-out families.
 
-- **H0 — naive baseline.** All-parameter LoRA fine-tuning: adapt the whole model
-  to T_sub with no attempt to protect task-general skill. This is the entangled
-  case the hypothesis predicts will degrade held-out performance most. Every
-  other method is compared against H0.
+- **H0 — naive baseline.** Naive single-task fine-tuning of π0.5 on T_sub with
+  `train_expert_only=true`: the pretrained vision-language backbone is frozen and
+  only the action expert is trained. This is *not* a LoRA-based method — LoRA
+  support for π0.5 is unreliable/unimplemented in both the openpi and LeRobot
+  training paths and has been dropped from this project entirely. This is the
+  entangled case the hypothesis predicts will degrade held-out performance most,
+  and every other method is compared against H0.
+  - The standard, unconstrained approach would be full fine-tuning of *all*
+    parameters, but that needs ~80 GB of GPU memory, exceeding the 40 GB A100
+    available to this project.
+  - `train_expert_only=true` is the configuration that fits this hardware
+    constraint, and is also the configuration most practitioners fine-tuning
+    π0.5 / π0.5-scale VLAs on a single consumer / single-GPU setup use in
+    practice for the same reason. It is therefore treated as the study's
+    realistic "naive fine-tuning" baseline, not a compromise unique to this
+    project.
+  - Framing implication: because the vision-language backbone is left untouched,
+    any held-out degradation observed under H0 cannot be attributed to
+    catastrophic forgetting in the semantic/language pathway alone. It would
+    instead indicate that even action-expert-only adaptation is sufficient to
+    disrupt transfer — a stronger and more specific finding than naive
+    full-parameter fine-tuning would demonstrate.
 - **H1, H2, H3 — selective tuning.** Progressively more targeted methods that
   restrict *which* parameters adapt, informed by the hypothesis above — e.g.
-  confining LoRA to the vision encoder and action head, or setting per-region
-  LoRA rank from a diagnostic of where the embodiment shift concentrates. The
-  concrete parameterization of each is specified when that method is run; what
-  they share is testing whether selective adaptation retains held-out capability
-  that H0 loses.
+  unfreezing the vision encoder together with the action expert, or choosing
+  which parameter regions to unfreeze from a diagnostic of where the embodiment
+  shift concentrates. The concrete parameterization of each is specified when
+  that method is run; what they share is testing whether selective adaptation
+  retains held-out capability that H0 loses.
