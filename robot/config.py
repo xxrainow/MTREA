@@ -1,4 +1,4 @@
-"""Single source of truth for SO-101 robot hardware constants.
+"""Single source of truth for SO-101 Robot hardware constants.
 
 Everything that needs an FPS, a joint name, a camera, or a network endpoint
 imports it from here. Nothing else in the codebase defines these values, so
@@ -72,3 +72,4 @@ class RolloutGuardrails:
 # (AGENTS.md Boundaries, CVE-2026-25874). Reach the A100 host via SSH tunnel.
 POLICY_SERVER_HOST = "127.0.0.1"
 POLICY_SERVER_PORT = 8765
+
