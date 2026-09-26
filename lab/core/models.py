@@ -139,7 +139,7 @@ class PolicyServerStatus:
     ready: bool = False
     loading: bool = False
     checkpoint: str | None = None
-    detail: str = ""
+    detail: str = ""      # "tunnel down" / "server not started" / "loading checkpoint h0_seed0"
 
 
 @dataclass
