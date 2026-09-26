@@ -1,0 +1,12 @@
+# Camera names are fixed in lab/config.py (they become dataset columns).
+# Only the per-machine part lives here: which device each name maps to.
+wrist:
+  index_or_path: 0
+  width: 640
+  height: 480
+  fps: 30
+scene:
+  index_or_path: 2
+  width: 640
+  height: 480
+  fps: 30

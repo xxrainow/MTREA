@@ -1,0 +1,15 @@
+# GPU host used for train / norm_stats / serve_policy. Copy to remote.yaml
+# (gitignored) and fill in. Never commit real hosts or usernames.
+host: gpu-server.example.ac.kr
+user: your_id
+ssh_key: ~/.ssh/id_ed25519
+repo_dir: /home/your_id/MTREA      # checkout on the GPU host; scripts run from here
+data_dir: /home/your_id/MTREA/data # must follow the same data/ layout as local
+python: /home/your_id/.venv/bin/python
+
+# serve_policy binds this on the GPU host's own localhost only.
+# The robot side reaches it through `ssh -L 8765:localhost:<policy_port>`;
+# 8765 is fixed in lab/config.py, this number is not.
+policy_port: 8000
+
+gpu_count: 1                        # runner refuses a second training job when 1

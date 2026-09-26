@@ -1,0 +1,5 @@
+# Leader arm (human-held, teleop input only). Never driven by a policy.
+type: so101_leader
+id: leader_01
+port: /dev/tty.usbmodem58760431542
+use_degrees: true
