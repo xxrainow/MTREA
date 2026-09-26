@@ -80,6 +80,7 @@ def dataset_dir(name: str, base: Path | None = None) -> Path:
     return datasets_dir(base) / name
 
 
+# examples
 def ensure_dirs(base: Path | None = None) -> Path:
     """Create the whole layout. Called once at server start; idempotent."""
     r = root(base)
