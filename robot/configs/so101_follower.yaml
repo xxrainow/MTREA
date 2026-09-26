@@ -1,0 +1,8 @@
+# Follower arm (the one the policy / teleop drives).
+# Serial port changes per machine and USB slot: check with `ls /dev/tty*` or
+# `lerobot-find-port` before editing.
+type: so101_follower
+id: follower_01          # LeRobot uses this as the calibration cache key
+port: /dev/tty.usbmodem58760431541
+use_degrees: true
+max_relative_target: null   # LeRobot safety clamp per step; null = unlimited (set during first teleop)

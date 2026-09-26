@@ -9,6 +9,9 @@ data/
 calibration/
 # third_party/ is a git submodule (openpi); it is tracked, not ignored.
 
+robot/configs/remote.yaml
+
+
 # --- Python ---
 __pycache__/
 *.py[cod]
@@ -51,3 +54,4 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+

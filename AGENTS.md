@@ -37,11 +37,19 @@ plugged in. They will not run in a plain checkout — check before invoking.
 ## Structure
 
 ```
-lab/         interface: calibrate, teleoperate, record, rollout, server, web
+lab/core/    robot control, recording, job runner, state — knows nothing about HTTP
+lab/server/  FastAPI (:8001) + ws.py — receives requests and delegates to core
+lab/web/     React + Vite (:8080) — buttons and status only, no Python
 research/    methods, task definitions, eval, analysis
 scripts/     thin shell wrappers over `python -m research.*`
-data/        datasets, checkpoints, logs, video — gitignored, never committed
+robot/configs/ so101_follower/leader.yaml, cameras.yaml, remote.yaml (gitignored)
+data/        raw, datasets, norm_stats, runs, rollouts, jobs, logs — gitignored, never committed
 ```
+
+`lab/` is three layers that do not mix: `core/` never imports FastAPI, `server/`
+API handlers never contain robot code, and `core/runner.py` never imports
+`research/` — it only runs the shell wrappers as subprocesses (local or over SSH).
+`lab/` and `research/` share only the `data/` layout and `robot/configs/`.
 
 `research/` must never import from `lab/`. The dependency runs one way so
 `research/` can be lifted into a standalone paper repo. `tests/test_boundary.py`
@@ -68,9 +76,12 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
 - Comments and docstrings in English, and sparse. Explain why, not what.
 - Robot constants (FPS, joint order, camera names) live only in `lab/config.py`.
   Nothing else defines them; everything else imports them.
+- `POLICY_SERVER_HOST/PORT` in `lab/config.py` (127.0.0.1:8765) is the robot-side
+  end of an SSH tunnel, never a remote address. `serve_policy` on the GPU host binds
+  its own localhost only; the GPU-side port lives in `robot/configs/remote.yaml`.
 - Hardware is assumed to be SO-101 throughout. Supporting another arm means
-  changing `lab/config.py`, `lab/calibrate.py`, and `research/transforms/` —
-  not a config flag today.
+  changing `lab/config.py`, `lab/core/robot.py`, `robot/configs/`, and
+  `research/transforms/` — not a config flag today.
 - Analysis code must run on synthetic inputs, so correctness is testable with
   no GPU and no robot.
 
