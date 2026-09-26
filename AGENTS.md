@@ -43,7 +43,7 @@ lab/web/     React + Vite (:8080) — buttons and status only, no Python
 research/    methods, task definitions, eval, analysis
 scripts/     thin shell wrappers over `python -m research.*`
 robot/configs/ so101_follower/leader.yaml, cameras.yaml, remote.yaml (gitignored)
-data/        raw, datasets, norm_stats, checkpoints, rollouts, jobs, logs — gitignored, never committed
+data/        raw, datasets, norm_stats, runs, rollouts, jobs, logs — gitignored, never committed
 ```
 
 `lab/` is three layers that do not mix: `core/` never imports FastAPI, `server/`
