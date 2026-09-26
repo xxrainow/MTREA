@@ -21,7 +21,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["lab", "research"]
+packages = ["lab", "research", "robot"]
 
 [tool.pytest.ini_options]
 testpaths = ["research", "tests"]
