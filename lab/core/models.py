@@ -177,7 +177,7 @@ class CheckpointInfo:
 @dataclass
 class RolloutRecord:
     id: str
-    checkpoint: str  # run_id/step, or "pretrained" for the pre-adaptation baseline
+    checkpoint: str  # run_id/step of the evaluated checkpoint
     task: str  # task name from research/collect/tasks/*.yaml
     instruction: str
     success: bool | None  # None until a human marks it

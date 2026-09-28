@@ -1,30 +1,34 @@
 #!/usr/bin/env bash
 # Terminal recording test for SO-101 — one short episode into data/raw/.
 #
-# Fill in the four values below, then
 #     bash experiments/record_test.sh
-# 
+#
+# Ports, calibration ids and camera indices come from robot/configs/; edit
+# so101_follower.yaml, so101_leader.yaml and cameras.yaml, not this script.
 # Find ports:    lerobot-find-port        (unplug/replug one arm at a time)
 # Find cameras:  lerobot-find-cameras opencv
-# Calibration ids must match what LeLab used:
+# Set the `id` in each yaml to whatever calibration already exists under:
 #     ls ~/.cache/huggingface/lerobot/calibration/robots/so101_follower/
 #     ls ~/.cache/huggingface/lerobot/calibration/teleoperators/so101_leader/
 
 set -euo pipefail
 
-# ---- need to fill ------------------------------------------------
-FOLLOWER_PORT="/dev/tty.usbmodemXXXX"
-LEADER_PORT="/dev/tty.usbmodemYYYY"
-WRIST_CAM=0
-SCENE_CAM=1
-# ------------------------------------------------------------------------------
+cd "$(dirname "$0")/.."   # repo root, wherever this is run from
 
-FOLLOWER_ID="so-arm1"
-LEADER_ID="so-arm1"
+# cfg FILE KEY [KEY...] — print a nested value from a yaml file.
+cfg() {
+  python -c 'import sys, functools, yaml; print(functools.reduce(lambda d, k: d[k], sys.argv[2:], yaml.safe_load(open(sys.argv[1]))))' "$@"
+}
+
+FOLLOWER_PORT=$(cfg robot/configs/so101_follower.yaml port)
+FOLLOWER_ID=$(cfg robot/configs/so101_follower.yaml id)
+LEADER_PORT=$(cfg robot/configs/so101_leader.yaml port)
+LEADER_ID=$(cfg robot/configs/so101_leader.yaml id)
+WRIST_CAM=$(cfg robot/configs/cameras.yaml wrist index_or_path)
+SCENE_CAM=$(cfg robot/configs/cameras.yaml scene index_or_path)
+
 TASK="pick up the red block and place it in the blue cup"
 OUT="data/raw/pick_place_cli_test"
-
-cd "$(dirname "$0")/.."   # repo root, wherever this is run from
 
 lerobot-record \
   --robot.type so101_follower \

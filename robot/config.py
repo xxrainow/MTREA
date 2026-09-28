@@ -50,10 +50,15 @@ CAMERAS = [
 def data_root() -> Path:
     """Root for datasets/checkpoints/logs/video (gitignored, never committed).
 
-    Read from the ROBOLAB_DATA_ROOT env var so machines with different disk
-    layouts (the A100 host vs a laptop) agree without touching code.
+    Defaults to the repo's own data/ directory, the same place
+    experiments/record_test.sh and remote.yaml's data_dir use. The
+    ROBOLAB_DATA_ROOT env var overrides it for machines whose disk layout
+    needs data elsewhere.
     """
-    return Path(os.environ.get("ROBOLAB_DATA_ROOT", "~/robolab-data")).expanduser()
+    override = os.environ.get("ROBOLAB_DATA_ROOT")
+    if override:
+        return Path(override).expanduser()
+    return Path(__file__).resolve().parent.parent / "data"
 
 
 @dataclass(frozen=True)
