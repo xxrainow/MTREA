@@ -60,9 +60,11 @@ Fine-tuning a pretrained VLA onto a new embodiment conflates two distinct things
   competence retained from pretraining on T, which is what makes held-out tasks
   possible at all.
 
-**Hypothesis:** naive fine-tuning (H0) updates all parameters to fit T_sub and
-thereby *entangles* (a) and (b) — dragging the parameters responsible for
-task-general skill toward the single fine-tuned task and corrupting held-out
+**Hypothesis:** naive fine-tuning (H0) updates only the action expert's
+parameters to fit T_sub, leaving the frozen vision-language backbone unchanged,
+yet this still *entangles* (a) and (b) — because the action expert is the shared
+machinery both rely on, tuning it toward the single fine-tuned task drags the
+skill responsible for held-out tasks along with it, corrupting held-out
 performance. A method that **selectively tunes only the parameters responsible
 for (a)** — for example the vision encoder plus the action head, the regions the
 adaptation-spectrum literature associates with novel object/geometry and
