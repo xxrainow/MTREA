@@ -124,7 +124,7 @@ class RobotStatus:
 
 @dataclass
 class GpuHostStatus:
-    reachable: bool = False
+    reachable: bool = False     # SSH available
     host: str | None = None
     # Whether a training job currently holds the (single) GPU.
     busy: bool = False
@@ -136,9 +136,9 @@ class PolicyServerStatus:
     # Probe result on the robot-side tunnel end (127.0.0.1:8765), not the GPU
     # host: if the tunnel is down the arm cannot be driven, whatever the
     # server is doing.
-    ready: bool = False
-    loading: bool = False
-    checkpoint: str | None = None
+    ready: bool = False     # 8765 respond?
+    loading: bool = False   # uploading models?
+    checkpoint: str | None = None   # Which checkpoint is up
     detail: str = ""      # "tunnel down" / "server not started" / "loading checkpoint h0_seed0"
 
 
