@@ -9,7 +9,7 @@ python: /home/your_id/.venv/bin/python
 
 # serve_policy binds this on the GPU host's own localhost only.
 # The robot side reaches it through `ssh -L 8765:localhost:<policy_port>`;
-# 8765 is fixed in lab/config.py, this number is not.
+# 8765 is fixed in robot/config.py, this number is not.
 policy_port: 8000
 
 gpu_count: 1                        # runner refuses a second training job when 1

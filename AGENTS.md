@@ -16,11 +16,20 @@ Terms used throughout the code; they are not self-explanatory from names alone.
 - **rollout** — one execution attempt of one task by a policy on the real robot.
 - **episode** — one recorded human teleoperation demo.
 
+## Invariants
+
+- Baseline is H0, never zero-shot. Zero-shot on SO-101 floors near 0% from
+  embodiment mismatch alone, so it carries no task-level signal.
+- Metrics are absolute success rates, never ratios. Any ratio divides by a
+  near-zero number here (H0's held-out success is expected to be low).
+
 ## Tech stack
 
 - Python 3.10+ · PyTorch
 - LeRobot (pinned to a release tag, not PyPI latest) for hardware I/O, dataset format, training
-- openpi as a git submodule under `third_party/` for π0.5
+- Training is LeRobot-native: `lerobot-train --policy.type=pi05` starting from
+  `lerobot/pi05_base`, with `train_expert_only=true` for H0. LoRA is not used
+  (unsupported for π0.5).
 - TODO: pin exact versions and package manager (uv vs pip) once the env is built
 
 ## Commands
@@ -31,18 +40,22 @@ pytest research/ -v                   # research-side tests (no GPU/robot needed
 pytest tests/test_boundary.py         # enforces lab -> research direction
 ```
 
-GPU/robot commands live in `scripts/*.sh` and need the A100 SSH host or the arm
-plugged in. They will not run in a plain checkout — check before invoking.
+Wrapper scripts live in top-level `scripts/*.sh` (not `research/scripts/`).
+They take `--flag=value` arguments, print one parseable progress line at a time
+to stdout, and exit 0 on success. GPU/robot commands among them need the A100
+SSH host or the arm plugged in. They will not run in a plain checkout — check
+before invoking.
 
 ## Structure
 
 ```
 lab/core/    robot control, recording, job runner, state — knows nothing about HTTP
-lab/server/  FastAPI (:8001) + ws.py — receives requests and delegates to core
-lab/web/     React + Vite (:8080) — buttons and status only, no Python
+lab/server/  (planned) FastAPI (:8001) + ws.py — receives requests and delegates to core
+lab/web/     (planned) React + Vite (:8080) — buttons and status only, no Python
 research/    methods, task definitions, eval, analysis
 scripts/     thin shell wrappers over `python -m research.*`
 robot/configs/ so101_follower/leader.yaml, cameras.yaml, remote.yaml (gitignored)
+experiments/  one-off hardware/data checks, not part of the pipeline
 data/        raw, datasets, norm_stats, runs, rollouts, jobs, logs — gitignored, never committed
 ```
 
@@ -74,23 +87,28 @@ enforces this; a violation is a failing test, not a style opinion.
 Only deviations from ordinary Python practice are listed; the rest is standard.
 
 - Comments and docstrings in English, and sparse. Explain why, not what.
-- Robot constants (FPS, joint order, camera names) live only in `lab/config.py`.
+- Robot constants (FPS, joint order, camera names) live only in `robot/config.py`.
   Nothing else defines them; everything else imports them.
-- `POLICY_SERVER_HOST/PORT` in `lab/config.py` (127.0.0.1:8765) is the robot-side
+- `POLICY_SERVER_HOST/PORT` in `robot/config.py` (127.0.0.1:8765) is the robot-side
   end of an SSH tunnel, never a remote address. `serve_policy` on the GPU host binds
   its own localhost only; the GPU-side port lives in `robot/configs/remote.yaml`.
 - Hardware is assumed to be SO-101 throughout. Supporting another arm means
-  changing `lab/config.py`, `lab/core/robot.py`, `robot/configs/`, and
-  `research/transforms/` — not a config flag today.
+  changing `robot/config.py`, `lab/core/robot.py`, and `robot/configs/` — not a
+  config flag today.
 - Analysis code must run on synthetic inputs, so correctness is testable with
   no GPU and no robot.
 
 ## Boundaries
 
 - Never commit anything under `data/`, `.env`, or calibration files.
-- Never edit files under `third_party/` — it is a submodule.
-- File ownership is in `.github/CODEOWNERS`; respect it rather than duplicating
-  the list here.
+- Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
+  tunnel.
+
+## Ownership
+
+Dev A owns `robot/`, `research/`, `docs/`. Dev B owns `lab/core/`, `lab/server/`,
+`lab/web/`, `scripts/`. Changes to the other person's area go through a PR they
+review; nobody pushes to main directly.
 
 ## Keeping this file current
 

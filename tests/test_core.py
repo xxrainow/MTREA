@@ -74,7 +74,7 @@ def test_job_round_trips_through_dict() -> None:
 
     spec = JobSpec(
         kind=JobKind.TRAIN,
-        cmd="bash research/scripts/train.sh --recipe recipes/h0.yaml --out data/runs/h0_seed0",
+        cmd="bash scripts/train.sh --dataset=pick_place --output=data/runs/h0_seed0",
         executor=Executor.SSH,
         label="h0_seed0",
     )

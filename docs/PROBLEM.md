@@ -65,12 +65,15 @@ parameters to fit T_sub, leaving the frozen vision-language backbone unchanged,
 yet this still *entangles* (a) and (b) — because the action expert is the shared
 machinery both rely on, tuning it toward the single fine-tuned task drags the
 skill responsible for held-out tasks along with it, corrupting held-out
-performance. A method that **selectively tunes only the parameters responsible
-for (a)** — for example the vision encoder plus the action head, the regions the
-adaptation-spectrum literature associates with novel object/geometry and
-embodiment shift (see `RELATED_WORK.md`) — while leaving the language backbone
-that carries (b) largely untouched, should preserve held-out performance better
-than H0 at equal T_sub performance.
+performance. Because H0 already freezes the entire vision-language backbone,
+choosing which top-level module to freeze cannot make a method more selective
+than H0: unfreezing more modules (e.g. the vision encoder alongside the action
+expert) tunes *more* than H0, not less. Methods beyond H0 must therefore
+intervene on a different axis — for example restricting which updates are
+allowed *within* the action expert, regularizing toward the pretrained weights,
+or changing the fine-tuning data. The concrete choice is left open. Such a
+method should preserve held-out performance better than H0 at equal T_sub
+performance.
 
 The project's job is to characterize this trade-off under realistic small-lab
 constraints, not to win a leaderboard.
@@ -90,22 +93,19 @@ T_sub demos and evaluated on the same held-out families.
   - The standard, unconstrained approach would be full fine-tuning of *all*
     parameters, but that needs ~80 GB of GPU memory, exceeding the 40 GB A100
     available to this project.
-  - `train_expert_only=true` is the configuration that fits this hardware
-    constraint, and is also the configuration most practitioners fine-tuning
-    π0.5 / π0.5-scale VLAs on a single consumer / single-GPU setup use in
-    practice for the same reason. It is therefore treated as the study's
-    realistic "naive fine-tuning" baseline, not a compromise unique to this
-    project.
+  - `train_expert_only=true` is LeRobot's documented memory-saving
+    configuration for π0.5. Published SO-101 π0.5 recipes use full fine-tuning
+    on 80 GB+ GPUs, which this project cannot run.
   - Framing implication: because the vision-language backbone is left untouched,
     any held-out degradation observed under H0 cannot be attributed to
     catastrophic forgetting in the semantic/language pathway alone. It would
     instead indicate that even action-expert-only adaptation is sufficient to
     disrupt transfer — a stronger and more specific finding than naive
     full-parameter fine-tuning would demonstrate.
-- **H1, H2, H3 — selective tuning.** Progressively more targeted methods that
-  restrict *which* parameters adapt, informed by the hypothesis above — e.g.
-  unfreezing the vision encoder together with the action expert, or choosing
-  which parameter regions to unfreeze from a diagnostic of where the embodiment
-  shift concentrates. The concrete parameterization of each is specified when
-  that method is run; what they share is testing whether selective adaptation
-  retains held-out capability that H0 loses.
+- **H1, H2, H3 — beyond H0.** Methods informed by the hypothesis above that
+  intervene on an axis other than which top-level module is frozen (H0 already
+  freezes the whole vision-language backbone) — e.g. restricting updates within
+  the action expert, regularizing toward the pretrained weights, or changing the
+  fine-tuning data. The concrete parameterization of each is specified when that
+  method is run; what they share is testing whether they retain held-out
+  capability that H0 loses.

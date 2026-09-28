@@ -1,4 +1,4 @@
-# Camera names are fixed in lab/config.py (they become dataset columns).
+# Camera names are fixed in robot/config.py (they become dataset columns).
 # Only the per-machine part lives here: which device each name maps to.
 wrist:
   index_or_path: 0
