@@ -15,6 +15,9 @@ Terms used throughout the code; they are not self-explanatory from names alone.
   single-task fine-tuning and serves as the baseline all others are compared against.
 - **rollout** — one execution attempt of one task by a policy on the real robot.
 - **episode** — one recorded human teleoperation demo.
+- **oracle** — a reference model fine-tuned on a held-out task's own demos. It
+  gives the ceiling for that task on SO-101. It is not a baseline and not a
+  method under comparison.
 
 ## Invariants
 
@@ -22,6 +25,8 @@ Terms used throughout the code; they are not self-explanatory from names alone.
   embodiment mismatch alone, so it carries no task-level signal.
 - Metrics are absolute success rates, never ratios. Any ratio divides by a
   near-zero number here (H0's held-out success is expected to be low).
+- An oracle's demos never enter the training data of H0 or any compared method.
+  A held-out task stays held-out for every compared method.
 
 ## Tech stack
 
