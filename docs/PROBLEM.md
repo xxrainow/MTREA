@@ -22,6 +22,14 @@ The question is what fine-tuning on T_sub does to held-out performance on the
 *new* embodiment (SO-101), relative to a baseline that also had to cross the
 same embodiment gap.
 
+## Research questions
+
+- **RQ1 (phenomenon).** After H0, how much held-out capability does the model
+  show on SO-101, and does it track motion overlap with `pick_place` (expected
+  order `stack` > `push` > `pour` > `open_drawer`)?
+- **RQ2 (method).** Can a fine-tuning method beyond H0 raise held-out success
+  without lowering T_sub (`pick_place`) success?
+
 ## Why zero-shot is not a valid baseline
 
 The natural-seeming baseline — run the pretrained model on SO-101 held-out tasks
@@ -37,6 +45,25 @@ Instead the baseline is **H0**: naive fine-tuning on T_sub. H0 has paid the same
 embodiment-adaptation cost as every method under comparison, so differences in
 held-out performance between H0 and a later method are attributable to *how* the
 model was adapted, not to whether it was adapted at all.
+
+## Reference points: floor and ceiling
+
+Zero-shot is only a floor: embodiment mismatch alone puts it near 0%. Without
+a ceiling as well, a low held-out number is uninterpretable — it cannot
+distinguish "capability was lost" from "SO-101 never reaches more than this on
+the task".
+
+The ceiling is an **oracle**: a model fine-tuned with the same recipe as H0 on
+demos of that held-out task itself, evaluated with the same protocol. It is run
+for only 1–2 held-out tasks (which ones is TBD), because each needs its own
+demo collection.
+
+- The oracle is a reference point, not a baseline. H0 remains the baseline
+  every method is compared against. The oracle is reported alongside as an
+  absolute success rate, never used as a ratio denominator (see "Why absolute
+  success rates, not ratios").
+- Oracle demos are a separate dataset. They never enter H0/H1+ training, so the
+  task stays held-out for every compared method.
 
 ## Why absolute success rates, not ratios
 
