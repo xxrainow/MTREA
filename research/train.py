@@ -37,6 +37,7 @@ import signal
 import socket
 import subprocess
 import sys
+from collections import deque
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
@@ -322,6 +323,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 def _run(lerobot_argv: list[str], output: Path, total_steps: int, log_freq: int) -> int:
     proc: Optional[subprocess.Popen] = None
     stop_requested = False
+    tail: deque[str] = deque(maxlen=30)  # printed to stderr if the run fails
     last: dict = {"step": None, "loss": None}
 
     def result(status: str, exit_code: Optional[int]) -> dict:
@@ -345,7 +347,10 @@ def _run(lerobot_argv: list[str], output: Path, total_steps: int, log_freq: int)
         _say("STATUS started")
         try:
             proc = subprocess.Popen(lerobot_argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.DEVNULL)
+                                    stdin=subprocess.DEVNULL,
+                                    # A piped Python child block-buffers stdout; without this,
+                                    # train.log lags and a crash can lose its last lines.
+                                    env={**os.environ, "PYTHONUNBUFFERED": "1"})
         except OSError as e:
             print(f"error: cannot start {lerobot_argv[0]!r}: {e}", file=sys.stderr)
             _write_json(output / "result.json", result("failed", 127))
@@ -357,7 +362,10 @@ def _run(lerobot_argv: list[str], output: Path, total_steps: int, log_freq: int)
             for raw in proc.stdout:
                 log.write(raw)
                 log.flush()
-                parsed = parse_metrics_line(raw.decode("utf-8", errors="replace"))
+                text = raw.decode("utf-8", errors="replace")
+                # Keep what a terminal would show: the text after tqdm's last \r redraw.
+                tail.append(text.rstrip("\r\n").rsplit("\r", 1)[-1])
+                parsed = parse_metrics_line(text)
                 if parsed is None:
                     continue
                 step, exact = resolve_step(parsed["step"], prev_step, log_freq)
@@ -375,6 +383,10 @@ def _run(lerobot_argv: list[str], output: Path, total_steps: int, log_freq: int)
 
     exit_code = 128 - rc if rc < 0 else rc  # killed by signal N -> 128+N, as a shell reports it
     status = "stopped" if stop_requested else ("done" if rc == 0 else "failed")
+    if status == "failed":
+        for line in tail:
+            print(f"| {line}", file=sys.stderr)
+        sys.stderr.flush()
     _write_json(output / "result.json", result(status, exit_code))
     _say(f"STATUS {status} exit={exit_code}")
     return exit_code

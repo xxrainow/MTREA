@@ -36,8 +36,9 @@ def write_stub(tmp_path: Path, exit_code: int = 0, lines=(LOG_500, LOG_1K, LOG_1
     stub = tmp_path / "stub_lerobot_train.py"
     argv_file = tmp_path / "stub_argv.json"
     stub.write_text(textwrap.dedent(f"""
-        import json, sys, time
+        import json, os, sys, time
         json.dump(sys.argv[1:], open({str(argv_file)!r}, "w"))
+        open({str(tmp_path / "stub_env.txt")!r}, "w").write(os.environ.get("PYTHONUNBUFFERED", ""))
         for line in {list(NOISE[:2]) + list(lines)!r}:
             print(line, file=sys.stderr, flush=True)  # lerobot logs to stderr
             time.sleep({sleep_s})
@@ -262,6 +263,31 @@ def test_failing_run_records_failure(tmp_path, capsys):
     assert out[-1] == "STATUS failed exit=1"
     assert result["status"] == "failed" and result["exit_code"] == 1
     assert result["last_step"] == 500
+
+
+def test_failing_run_prints_log_tail_to_stderr(tmp_path, capsys):
+    lines = [LOG_500] + [f"noise {i}" for i in range(40)] + [
+        "Training:  25%|##5 | 1/2\r" + "Traceback (most recent call last):",
+        "RuntimeError: stub failure in lerobot-train"]
+    rc = main(base_args(tmp_path, write_stub(tmp_path, exit_code=1, lines=lines)))
+    captured = capsys.readouterr()
+    err = captured.err.splitlines()
+    assert rc == 1
+    assert err[-1] == "| RuntimeError: stub failure in lerobot-train"
+    assert err[-2] == "| Traceback (most recent call last):"  # text after tqdm's \r
+    assert len([l for l in err if l.startswith("| ")]) == 30
+    assert "| noise 0" not in err  # older than the last 30 lines
+    assert captured.out.splitlines()[-1] == "STATUS failed exit=1"
+
+
+def test_successful_run_prints_no_log_tail(tmp_path, capsys):
+    assert main(base_args(tmp_path, write_stub(tmp_path))) == 0
+    assert not any(l.startswith("| ") for l in capsys.readouterr().err.splitlines())
+
+
+def test_child_runs_unbuffered(tmp_path, capsys):
+    assert main(base_args(tmp_path, write_stub(tmp_path))) == 0
+    assert (tmp_path / "stub_env.txt").read_text(encoding="utf-8") == "1"
 
 
 def test_missing_binary_records_failure(tmp_path, capsys):
