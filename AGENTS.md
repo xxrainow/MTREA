@@ -43,6 +43,7 @@ Terms used throughout the code; they are not self-explanatory from names alone.
 pip install -e .                      # editable install
 pytest research/ -v                   # research-side tests (no GPU/robot needed)
 pytest tests/test_boundary.py         # enforces lab -> research direction
+scripts/train.sh --method=h0 --dataset=<repo_id> --output=data/runs/h0_pickplace_seed0 --seed=0 [--dry-run]
 ```
 
 Wrapper scripts live in top-level `scripts/*.sh` (not `research/scripts/`).
