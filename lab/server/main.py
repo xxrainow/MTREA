@@ -11,39 +11,51 @@ from lab.core.runner import Runner
 from lab.core.store import JobStore
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    repo_root = Path(__file__).resolve().parents[2]
-    data_base = paths.ensure_dirs()
+def create_app(data_base: Path | None = None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        repo_root = Path(__file__).resolve().parents[2]
+        resolved_data = paths.ensure_dirs(base=data_base)
 
-    store = JobStore(paths.jobs_ledger(data_base))
-    local_executor = LocalExecutor(repo_root=repo_root)
+        store = JobStore(paths.jobs_ledger(resolved_data))
+        local_executor = LocalExecutor(repo_root=repo_root)
 
-    runner = Runner(
-        store=store,
-        executors={Executor.LOCAL: local_executor},
-        data_base=data_base,
-        repo_root=repo_root,
+        app.state.runner = Runner(
+            store=store,
+            executors={Executor.LOCAL: local_executor},
+            data_base=resolved_data,
+            repo_root=repo_root,
+        )
+        app.state.runner_lock = Lock()
+
+        yield
+
+    application = FastAPI(
+        title="MTREA Lab",
+        lifespan=lifespan,
     )
 
-    app.state.runner = runner
-    app.state.runner_lock = Lock()
+    application.add_api_route(
+        "/api/health", health, methods=["GET"]
+    )
+    application.add_api_route(
+        "/api/jobs", list_jobs, methods=["GET"]
+    )
+    application.add_api_route(
+        "/api/jobs/{job_id}", get_job, methods=["GET"]
+    )
+    application.add_api_route(
+        "/api/jobs/{job_id}/logs", get_job_logs, methods=["GET"]
+    )
+    application.add_api_route(
+        "/api/jobs/{job_id}/stop", stop_job, methods=["POST"]
+    )
 
-    yield
+    return application
 
-
-app = FastAPI(
-    title="MTREA Lab",
-    lifespan=lifespan,
-)
-
-
-@app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
-
-@app.get("/api/jobs")
 def list_jobs(request: Request) -> list[dict]:
     runner: Runner = request.app.state.runner
 
@@ -51,7 +63,6 @@ def list_jobs(request: Request) -> list[dict]:
         jobs = runner.refresh()
         return [job.to_dict() for job in jobs]
 
-@app.get("/api/jobs/{job_id}")
 def get_job(job_id: str, request: Request) -> dict:
     runner: Runner = request.app.state.runner
 
@@ -66,8 +77,6 @@ def get_job(job_id: str, request: Request) -> dict:
 
         return job.to_dict()
 
-
-@app.get("/api/jobs/{job_id}/logs")
 def get_job_logs(
     job_id: str,
     request: Request,
@@ -94,7 +103,6 @@ def get_job_logs(
             "content": content,
         }
 
-@app.post("/api/jobs/{job_id}/stop")
 def stop_job(job_id: str, request: Request) -> dict:
     runner: Runner = request.app.state.runner
 
@@ -117,3 +125,5 @@ def stop_job(job_id: str, request: Request) -> dict:
         stopped_job = runner.stop(job_id)
 
         return stopped_job.to_dict()
+
+app = create_app()

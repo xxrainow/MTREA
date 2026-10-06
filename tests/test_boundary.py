@@ -4,6 +4,8 @@ research/ must never import from lab/. The point is that research/ can be
 lifted out into a standalone paper repo, so it may carry no dependency on the
 hardware-interface code in lab/. The reverse direction (lab/ importing
 research/) is expected and is deliberately not checked here.
+lab/core/ must not import FastAPI or Starlette.
+lab/core/runner.py must not import research/.
 
 A violation is a failing test, not a style opinion. See AGENTS.md.
 """
@@ -48,3 +50,63 @@ def test_research_does_not_import_lab() -> None:
         "research/ must not import from lab/ (see AGENTS.md); found:\n  "
         + "\n  ".join(violations)
     )
+
+
+def _find_forbidden_imports(
+    path: Path,
+    forbidden: set[str],
+) -> list[str]:
+    tree = ast.parse(
+        path.read_text(encoding="utf-8"),
+        filename=str(path),
+    )
+
+    violations = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            modules = [node.module] if node.module else []
+
+        else:
+            continue
+
+        for module in modules:
+            top_level = module.split(".")[0]
+
+            if top_level in forbidden:
+                relative = path.relative_to(REPO_ROOT)
+                violations.append(
+                    f"{relative}:{node.lineno} imports {module}"
+                )
+
+    return violations
+
+
+# core, runner's Hierarchy Separation Rule
+
+def test_core_does_not_import_http_frameworks():
+    violations = []
+
+    for path in (REPO_ROOT / "lab" / "core").rglob("*.py"):
+        violations.extend(
+            _find_forbidden_imports(
+                path,
+                forbidden={"fastapi", "starlette"},
+            )
+        )
+
+    assert not violations, "\n".join(violations)
+
+
+def test_runner_does_not_import_research():
+    path = REPO_ROOT / "lab" / "core" / "runner.py"
+
+    violations = _find_forbidden_imports(
+        path,
+        forbidden={"research"},
+    )
+
+    assert not violations, "\n".join(violations)
