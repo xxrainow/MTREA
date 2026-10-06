@@ -4,7 +4,9 @@ import os
 import signal
 import subprocess
 import time
+import psutil
 from pathlib import Path
+
 
 from lab.core.executors.base import BaseExecutor
 from lab.core.models import JobSpec
@@ -39,15 +41,20 @@ class LocalExecutor(BaseExecutor):
 
     def is_running(self, pid: int) -> bool:
         proc = self._procs.get(pid)
+
         if proc is not None:
             return proc.poll() is None
+
         try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+            process = psutil.Process(pid)
+            return process.status() not in (
+                psutil.STATUS_ZOMBIE,
+                psutil.STATUS_DEAD,
+            )
+        except psutil.NoSuchProcess:
             return False
-        except PermissionError:
+        except psutil.AccessDenied:
             return True
-        return True
 
     def exit_code(self, pid: int) -> int | None:
         proc = self._procs.get(pid)
@@ -57,7 +64,7 @@ class LocalExecutor(BaseExecutor):
         # Signal the whole group so `bash -c "python train.py"` takes python
         # down with it, not just the bash wrapper.
         try:
-            os.killpg(pid, signal.SIGTERM)
+            os.killpg(pid, signal.SIGTERM) 
         except ProcessLookupError:
             return
         deadline = time.monotonic() + grace_s

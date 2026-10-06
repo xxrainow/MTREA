@@ -6,7 +6,7 @@ wrist:
   height: 480
   fps: 30
 scene:
-  index_or_path: 2
+  index_or_path: 1
   width: 640
   height: 480
   fps: 30

@@ -93,10 +93,10 @@ class Runner:
         if job is None:
             raise KeyError(job_id)
         if job.status == JobStatus.RUNNING and job.pid is not None:
-            self.executors[job.spec.executor].stop(job.pid)
+            self.executors[job.spec.executor].stop(job.pid) # stop process by executor
             job.status = JobStatus.STOPPED
             job.finished_at = datetime.now()
-            self.store.save(job)
+            self.store.save(job) # Record the changed job status in the jobs.jsonl file
         return job
 
     # --- helpers ---
