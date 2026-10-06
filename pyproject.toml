@@ -13,15 +13,22 @@ requires-python = ">=3.10"
 # (uv vs pip) TODO.
 dependencies = [
     "torch",
+    "psutil",
 ]
 
 [project.optional-dependencies]
+server = [
+    "fastapi",
+    "uvicorn",
+]
 dev = [
     "pytest",
+    "httpx",
 ]
 
-[tool.setuptools]
-packages = ["lab", "research", "robot"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lab*", "research*", "robot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["research", "tests"]

@@ -17,7 +17,7 @@ Test without a dataset (prints this usage text):
 
     pip install pandas pyarrow
     python experiments/inspect_dataset.py
-
+git commit -m "Add dataset inspector and terminal recording script for Tuesday"
 """
 
 
