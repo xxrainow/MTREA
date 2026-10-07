@@ -20,6 +20,12 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
 
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [logContent, setLogContent] = useState('');
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState<string | null>(null);
+  const [logRefreshKey, setLogRefreshKey] = useState(0);
+
   useEffect(() => {
     const controller = new AbortController();
 
@@ -54,6 +60,62 @@ function App() {
 
     return () => controller.abort();
   }, [refreshKey]);
+
+  useEffect(() => {
+    if (selectedJobId === null) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function loadLog() {
+      setLogLoading(true);
+      setLogError(null);
+      setLogContent('');
+
+      try {
+        const response = await fetch(
+          `/api/jobs/${encodeURIComponent(selectedJobId!)}` +
+            '/logs?tail_lines=100',
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch logs: HTTP ${response.status}`);
+        }
+
+        const data: { job_id: string; content: string } = await response.json();
+
+        if (!controller.signal.aborted) {
+          setLogContent(data.content);
+        }
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setLogError(
+          error instanceof Error ? error.message : 'Unable to load logs.',
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setLogLoading(false);
+        }
+      }
+    }
+
+    void loadLog();
+
+    return () => controller.abort();
+  }, [selectedJobId, logRefreshKey]);
+
+  function handleViewLog(jobId: string) {
+    setLogLoading(true);
+    setLogError(null);
+    setLogContent('');
+    setSelectedJobId(jobId);
+    setLogRefreshKey((previous) => previous + 1);
+  }
 
   function handleRefresh() {
     setLoading(true);
@@ -90,7 +152,11 @@ function App() {
       <h1>MTREA Lab</h1>
       <h2>Jobs</h2>
 
-      <button type="button" onClick={handleRefresh} disabled={loading || stoppingJobId !== null}>
+      <button
+        type="button"
+        onClick={handleRefresh}
+        disabled={loading || stoppingJobId !== null}
+      >
         {loading ? 'Loading…' : 'Refresh'}
       </button>
 
@@ -135,11 +201,46 @@ function App() {
                   >
                     {stoppingJobId === job.id ? 'Stopping…' : 'Stop'}
                   </button>
+                  <button type="button" onClick={() => handleViewLog(job.id)}>
+                    View logs
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+
+      {selectedJobId !== null && (
+        <section className="job-logs" aria-label="Job logs">
+          <h2>Logs</h2>
+          <p>Job ID: {selectedJobId}</p>
+          <p>Last 100 lines</p>
+
+          <button
+            type="button"
+            onClick={() => handleViewLog(selectedJobId)}
+            disabled={logLoading}
+          >
+            {logLoading ? 'Loading…' : 'Refresh logs'}
+          </button>
+
+          <button type="button" onClick={() => setSelectedJobId(null)}>
+            Close
+          </button>
+
+          {logLoading && <p role="status">Loading logs…</p>}
+
+          {logError && <p role="alert">{logError}</p>}
+
+          {!logLoading &&
+            !logError &&
+            (logContent.length > 0 ? (
+              <pre className="log-output">{logContent}</pre>
+            ) : (
+              <p>No log output available.</p>
+            ))}
+        </section>
       )}
     </main>
   );

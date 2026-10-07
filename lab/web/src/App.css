@@ -24,3 +24,23 @@ th {
 [role='alert'] {
   color: #b91c1c;
 }
+
+.job-logs {
+  margin-top: 24px;
+}
+
+.job-logs button + button {
+  margin-left: 8px;
+}
+
+.log-output {
+  max-height: 400px;
+  overflow: auto;
+  padding: 16px;
+  background: #151515;
+  color: #eeeeee;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
