@@ -69,12 +69,19 @@ class Runner:
         jobs = self.store.list()
         for job in jobs:
             if job.status != JobStatus.RUNNING or job.pid is None:
+                # Do not change the ledger if the termination result is unknown
                 continue
             executor = self.executors.get(job.spec.executor)
             if executor is None or executor.is_running(job.pid):
                 continue
             job.exit_code = executor.exit_code(job.pid)
-            job.status = JobStatus.DONE if job.exit_code == 0 else JobStatus.FAILED
+            if job.exit_code is None:
+                continue
+            elif job.exit_code == 0:
+                job.status = JobStatus.DONE
+            else:
+                job.status = JobStatus.FAILED
+
             job.finished_at = datetime.now()
             self.store.save(job)
         return jobs
