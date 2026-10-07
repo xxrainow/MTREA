@@ -30,6 +30,7 @@ class JobStatus(str, Enum):
     DONE = "done"
     FAILED = "failed"
     STOPPED = "stopped"
+    UNKNOWN = "unknown"
 
 
 class Executor(str, Enum):
