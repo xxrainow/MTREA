@@ -42,9 +42,11 @@ class LocalExecutor(BaseExecutor):
     def is_running(self, pid: int) -> bool:
         proc = self._procs.get(pid)
 
+        # If there is a Popen object in this runner
         if proc is not None:
             return proc.poll() is None
 
+        # If there is no object, check by PID
         try:
             process = psutil.Process(pid)
             return process.status() not in (
