@@ -68,15 +68,25 @@ class Runner:
         """Poll every active job; persist any state change. Returns all jobs."""
         jobs = self.store.list()
         for job in jobs:
-            if job.status != JobStatus.RUNNING or job.pid is None:
-                # Do not change the ledger if the termination result is unknown
+            # Do not change the ledger if the termination result is unknown
+            if job.status not in (JobStatus.RUNNING, JobStatus.UNKNOWN):
                 continue
+            if job.pid is None:               
+                continue
+            
+            # If it is running and has a PID, check whether it is actually running
             executor = self.executors.get(job.spec.executor)
             if executor is None or executor.is_running(job.pid):
                 continue
+            
             job.exit_code = executor.exit_code(job.pid)
+            
             if job.exit_code is None:
-                continue
+                # Confirmed is_running = False; but don't know the exit_code
+                if job.status == JobStatus.UNKNOWN:
+                    continue
+
+                job.status = JobStatus.UNKNOWN
             elif job.exit_code == 0:
                 job.status = JobStatus.DONE
             else:
