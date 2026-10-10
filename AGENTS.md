@@ -76,6 +76,10 @@ enforces this; a violation is a failing test, not a style opinion.
 
 ## Experiment conventions
 
+- `experiments/inspect_dataset.py` performs read-only recording integrity checks
+  across all parquet files and within each episode. `--check-videos` additionally
+  decodes all MP4s with ffmpeg. Passing does not establish training compatibility,
+  camera identity, synchronization, or demonstration quality.
 - Every training run gets a directory under `data/runs/<run_id>/` holding its
   resolved config, `metrics.jsonl`, and checkpoints. Nothing about a run is
   reconstructed from memory or from the command line after the fact.
