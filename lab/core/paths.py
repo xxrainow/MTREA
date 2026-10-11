@@ -12,6 +12,7 @@ arguments (they never import lab). Same layout on both machines.
       rollouts/    policy executions on the real robot (append-only)
       jobs/        runner ledger (jobs.jsonl)
       logs/        captured stdout/stderr, one file per job
+      locks/       hardware.lock: which process holds the SO-101 arms
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ SUBDIRS = (
     "rollouts",
     "jobs",
     "logs",
+    "locks",
 )
 
 
@@ -62,6 +64,14 @@ def jobs_dir(base: Path | None = None) -> Path:
 
 def logs_dir(base: Path | None = None) -> Path:
     return root(base) / "logs"
+
+
+def locks_dir(base: Path | None = None) -> Path:
+    return root(base) / "locks"
+
+
+def hardware_lock(base: Path | None = None) -> Path:
+    return locks_dir(base) / "hardware.lock"
 
 
 def jobs_ledger(base: Path | None = None) -> Path:

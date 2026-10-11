@@ -49,6 +49,8 @@ import yaml
 # Runnable from anywhere without `pip install -e .`: put the repo root on the path.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+from lab.core.hardware import HardwareBusy  # noqa: E402
+from lab.core.hardware.lock import HardwareLock  # noqa: E402
 from research.collect.plan import Plan, PlanError, Session, load_plan, sessions  # noqa: E402
 from robot.config import CAMERAS, FPS, ROBOT_TYPE, TELEOP_TYPE, data_root  # noqa: E402
 
@@ -480,24 +482,34 @@ def main(argv: list[str] | None = None) -> int:
         found = f"lerobot {version} is installed" if version else "lerobot is not importable from this Python"
         print(f"[!!] {found}; this tool's resume/num_episodes handling was checked against {LEROBOT_CHECKED}")
 
-    done_now: list[int] = []
-    for session in queue:
-        outcome, reason = run_session(plan, args.plan, plan_sha, session, root, ledger, lines,
-                                      exe, version)
-        if outcome == "ok":
-            done_now.append(session.index)
-            continue
-        if outcome == "quit":
-            print(f"\nstopped by the operator before session {session.index} ({session.object})")
+    # Same lock as lab/core/hardware: no server session or CLI may open the
+    # arms while lerobot-record has them.
+    lock = HardwareLock()
+    try:
+        lock.acquire("experiments/collect.py")
+    except HardwareBusy as exc:
+        print(f"[!!] {exc}", file=sys.stderr)
+        return 1
+    try:
+        done_now: list[int] = []
+        for session in queue:
+            outcome, reason = run_session(plan, args.plan, plan_sha, session, root, ledger, lines,
+                                          exe, version)
+            if outcome == "ok":
+                done_now.append(session.index)
+                continue
+            if outcome == "quit":
+                print(f"\nstopped by the operator before session {session.index} ({session.object})")
+                print_summary(plan, root, ledger, done_now)
+                return 0
+            print(f"\n[!!] stopped at session {session.index} ({session.object}): {reason}",
+                  file=sys.stderr)
             print_summary(plan, root, ledger, done_now)
-            return 0
-        print(f"\n[!!] stopped at session {session.index} ({session.object}): {reason}",
-              file=sys.stderr)
+            return {"interrupted": 130, "mismatch": 2}.get(outcome, 1)
         print_summary(plan, root, ledger, done_now)
-        return {"interrupted": 130, "mismatch": 2}.get(outcome, 1)
-    print_summary(plan, root, ledger, done_now)
-    return 0
-
+        return 0
+    finally:
+        lock.release()
 
 if __name__ == "__main__":
     sys.exit(main())
