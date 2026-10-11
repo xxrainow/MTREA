@@ -6,9 +6,11 @@ from fastapi import FastAPI, Request, HTTPException, Query
 
 from lab.core import paths
 from lab.core.executors.local import LocalExecutor
+from lab.core.hardware.service import HardwareService
 from lab.core.models import Executor
 from lab.core.runner import Runner
 from lab.core.store import JobStore
+from lab.server import hardware_api
 
 
 def create_app(data_base: Path | None = None) -> FastAPI:
@@ -27,8 +29,11 @@ def create_app(data_base: Path | None = None) -> FastAPI:
             repo_root=repo_root,
         )
         app.state.runner_lock = Lock()
+        app.state.hardware = HardwareService(data_base=resolved_data)
 
         yield
+
+        app.state.hardware.shutdown()  # stop any session and release the arms
 
     application = FastAPI(
         title="MTREA Lab",
@@ -50,6 +55,7 @@ def create_app(data_base: Path | None = None) -> FastAPI:
     application.add_api_route(
         "/api/jobs/{job_id}/stop", stop_job, methods=["POST"]
     )
+    application.include_router(hardware_api.router)
 
     return application
 

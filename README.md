@@ -69,6 +69,23 @@ a separate configuration.
 | GET | `/api/jobs/{job_id}` | Get a job |
 | GET | `/api/jobs/{job_id}/logs` | Read the last log lines |
 | POST | `/api/jobs/{job_id}/stop` | Stop a job |
+| GET | `/api/hardware/config` | Arm ports, ids, calibration files, who holds the arms |
+| GET | `/api/hardware/ports` | List serial ports |
+| POST | `/api/hardware/ports/detect/start` | `{arm}`: snapshot the ports before unplugging that arm |
+| POST | `/api/hardware/ports/detect/finish` | `{arm}`: wait up to 15 s for one port to disappear |
+| POST | `/api/hardware/ports/save` | `{arm, port}`: write the port into `robot/configs/so101_<arm>.yaml` |
+| POST | `/api/calibration/start` | `{arm}`: start calibrating one arm |
+| POST | `/api/calibration/next` | Finish the current step (homing, then range recording) |
+| POST | `/api/calibration/cancel` | Cancel; nothing is saved |
+| GET | `/api/calibration/status` | Step, instruction text, per-joint min/max/current |
+| POST | `/api/teleop/start` | Open both arms and start leader → follower |
+| POST | `/api/teleop/stop` | Stop teleoperation |
+| GET | `/api/teleop/status` | Running, achieved fps, error |
+| WS | `/ws/joints` | Joint frames during teleoperation and calibration |
+
+Hardware errors carry a `detail` message for the UI: 409 when the arms are
+held by another session or the request does not fit the current step, 422
+when port detection fails, 503 when an arm cannot be opened.
 
 Job submission through HTTP is not implemented yet.
 
@@ -85,6 +102,36 @@ If that process exits before saving the result, a completed job
 may remain recorded as `running`. Durable exit-result storage and
 explicit handling of unknown outcomes are future work.
 
+## Hardware
+
+`lab/core/hardware/` handles port detection, calibration and teleoperation for
+the SO-101 arms. The same code runs from the terminal, without the UI:
+
+```bash
+python -m lab.core.hardware.cli ports
+python -m lab.core.hardware.cli detect --arm=follower --save
+python -m lab.core.hardware.cli calibrate --arm=leader
+python -m lab.core.hardware.cli teleop --seconds=30
+```
+
+- **Settings.** Ports, ids and `use_degrees` come from
+  `robot/configs/so101_*.yaml`; saving a detected port rewrites only the
+  `port:` line. Calibration files are written where lerobot v0.6.1 reads them:
+  `~/.cache/huggingface/lerobot/calibration/robots/so_follower/<id>.json` and
+  `.../teleoperators/so_leader/<id>.json`. The `so101_follower/` and
+  `so101_leader/` directories used by older lerobot versions are not read.
+- **One holder.** Calibration, teleoperation and `experiments/collect.py`
+  take one lock (`data/locks/hardware.lock`, holding the owner's pid). A
+  second one is refused until the first stops. A lock left by a process that
+  died is reclaimed. A bare `lerobot-record` run does not take the lock.
+- **Stopping teleoperation turns the follower's torque off** (lerobot's
+  `disable_torque_on_disconnect`), so the arm goes limp. Rest it first.
+- **Fake mode.** `MTREA_HARDWARE=fake` swaps in fake arms (ports, calibration,
+  smoothly moving joints) for development without hardware. It is never the
+  default. Fake mode edits copies of the arm yamls under `data/fake/` and
+  saves calibrations as `<id>.fake.json`, which lerobot never reads. Every
+  status reports `backend: "real" | "fake"`.
+
 ## Data location
 
 Data defaults to the repository's `data/` directory.
@@ -99,6 +146,9 @@ From the repository root:
 
 ```bash
 python -m pytest tests/test_api.py tests/test_boundary.py -v
+python -m pytest tests/test_hardware.py tests/test_hardware_api.py -v
 ```
+
+The hardware tests use fake arms and need neither lerobot nor a robot.
 
 API tests use temporary data directories.

@@ -13,7 +13,7 @@ from __future__ import annotations
 import random
 import re
 import string
-from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,6 +78,7 @@ class Plan:
     session_objects: tuple[tuple[ObjectSpec, int], ...]
     episode_time_s: float
     reset_time_s: float
+    target_episodes: int  # from the task yaml
 
     @property
     def repo_id(self) -> str:
@@ -189,6 +190,7 @@ def parse_plan(raw: dict, path: Path, task_spec: dict) -> Plan:
         target=target, distractor=distractor, positions=positions, objects=inventory,
         session_objects=tuple(session_objects),
         episode_time_s=episode_time_s, reset_time_s=reset_time_s,
+        target_episodes=target_episodes,
     )
     _check_protocol(plan, target_episodes)
     for obj, _ in plan.session_objects:
@@ -201,26 +203,35 @@ def parse_plan(raw: dict, path: Path, task_spec: dict) -> Plan:
     return plan
 
 
+def diversity_problems(counts: Mapping[ObjectSpec, int], target_episodes: int) -> list[str]:
+    """Object diversity rules from protocol.md over per-object episode counts.
+
+    Used on the plan before recording and on the recorded dataset after it.
+    """
+    present = {obj: n for obj, n in counts.items() if n > 0}
+    colors = sorted({o.color for o in present})
+    types = sorted({o.type for o in present})
+    problems = []
+    if len(colors) < 3:
+        problems.append(f"protocol needs >= 3 colors, found {colors}")
+    if len(types) < 2:
+        problems.append(f"protocol needs >= 2 object types, found {types}")
+    for obj, n in sorted(present.items()):
+        if 2 * n > target_episodes:
+            problems.append(f"{obj} has {n} of {target_episodes} episodes (> 50%)")
+    return problems
+
+
 def _check_protocol(plan: Plan, target_episodes: int) -> None:
-    """Object diversity rules from protocol.md, counted over planned episodes."""
     total = plan.total_episodes
     if total != target_episodes:
         raise PlanError(f"plan has {total} episodes, task target_episodes is {target_episodes}")
     objs = [obj for obj, _ in plan.session_objects]
     if len(set(objs)) != len(objs):
         raise PlanError("one session per object: duplicate (color, type) in sessions")
-    colors = {o.color for o in objs}
-    types = {o.type for o in objs}
-    if len(colors) < 3:
-        raise PlanError(f"protocol needs >= 3 colors, plan has {sorted(colors)}")
-    if len(types) < 2:
-        raise PlanError(f"protocol needs >= 2 object types, plan has {sorted(types)}")
-    per_combo = Counter()
-    for obj, n in plan.session_objects:
-        per_combo[obj] += n
-    for obj, n in per_combo.items():
-        if 2 * n > target_episodes:
-            raise PlanError(f"{obj} has {n} of {target_episodes} episodes (> 50%)")
+    problems = diversity_problems(dict(plan.session_objects), target_episodes)
+    if problems:
+        raise PlanError(problems[0])
 
 
 def load_plan(path: str | Path, tasks_dir: Path = TASKS_DIR) -> Plan:

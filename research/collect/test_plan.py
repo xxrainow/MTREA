@@ -189,3 +189,15 @@ def test_no_distractor_leaves_fields_empty(raw):
         assert all(e.distractor is None and e.distractor_position is None
                    and e.distractor_kind is None for e in s.schedule)
         assert {e.target_position for e in s.schedule} == {"P1", "P2", "P3", "P4", "P5"}
+
+
+def test_diversity_problems_on_counts():
+    from research.collect.plan import diversity_problems
+    o = ObjectSpec
+    ok = {o("red", "block"): 9, o("blue", "block"): 8, o("green", "cup"): 33}
+    assert diversity_problems(ok, 50) == ["green cup has 33 of 50 episodes (> 50%)"]
+    two_colors = {o("red", "block"): 25, o("blue", "cup"): 25}
+    assert diversity_problems(two_colors, 50) == ["protocol needs >= 3 colors, found ['blue', 'red']"]
+    one_type = {o("red", "cup"): 20, o("blue", "cup"): 20, o("green", "cup"): 10, o("red", "block"): 0}
+    assert diversity_problems(one_type, 50) == ["protocol needs >= 2 object types, found ['cup']"]
+    assert diversity_problems(dict(load_plan(PLAN_PATH).session_objects), 50) == []

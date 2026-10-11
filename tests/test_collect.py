@@ -183,3 +183,18 @@ def test_dry_run_prints_remaining_sessions_and_touches_nothing(env, monkeypatch,
     assert out.count("$ ") == 6
     assert "Enter to record" not in out
     assert not env.exists()
+
+
+def test_refuses_while_another_session_holds_the_arms(env, monkeypatch, capsys):
+    from lab.core.hardware.lock import HardwareLock
+
+    lock = HardwareLock(env / "locks" / "hardware.lock")
+    lock.acquire("teleoperation")
+    try:
+        assert run(monkeypatch, "\n" * 6) == 1
+    finally:
+        lock.release()
+    assert "teleoperation" in capsys.readouterr().err
+    assert not (env / "raw" / "pick_place_v1.collection.jsonl").exists()
+    assert run(monkeypatch, "\n") == 0  # the arms are free again: session 1, then EOF quits
+    assert [line["session"] for line in ledger(env)] == [1]
