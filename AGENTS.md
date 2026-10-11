@@ -114,6 +114,10 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
 
 ## Boundaries
 
+- One process at a time holds the SO-101 arms. `lab/core/hardware/lock.py`
+  (`data/locks/hardware.lock`) is taken by calibration, teleoperation and
+  `experiments/collect.py`; any new code that opens the serial ports takes it
+  too.
 - Never commit anything under `data/`, `.env`, or calibration files.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.
