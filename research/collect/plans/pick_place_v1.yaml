@@ -8,9 +8,11 @@ dataset: pick_place_v1      # -> data/raw/pick_place_v1, repo_id local/pick_plac
 seed: 20261011              # per-episode layout schedule
 
 target: bowl                # the single container every object is placed in
-# Every episode has exactly one other object on the table, differing from the
-# target object in color and type, so the instruction must be read to pick the
-# right one.
+# Every episode has exactly one other object on the table, always of another
+# color than the target object. Within each session it alternates between two
+# kinds, so both words of the instruction are needed to pick the right one:
+#   same type, other color  (red block vs blue block)  -> the color decides
+#   other type, other color (red block vs blue cup)    -> the type decides
 distractor: true
 
 # Tape marks on the table where an object is placed at reset, numbered

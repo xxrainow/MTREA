@@ -9,7 +9,8 @@ import pytest
 import yaml
 
 from research.collect.plan import (
-    TASKS_DIR, ObjectSpec, PlanError, distractor_candidates, load_plan, parse_plan, sessions,
+    OTHER_TYPE, SAME_TYPE, TASKS_DIR, ObjectSpec, PlanError, distractor_candidates, load_plan,
+    parse_plan, sessions,
 )
 
 PLAN_PATH = Path(__file__).resolve().parent / "plans" / "pick_place_v1.yaml"
@@ -144,27 +145,47 @@ def test_schedule_invariants():
             assert e.distractor is not None
             assert e.distractor != s.object
             assert e.distractor.color != s.object.color
-            assert e.distractor.type != s.object.type  # possible with 2 types
             assert e.distractor_position != e.target_position
             assert e.distractor_position in plan.positions
-        # Both eligible distractors are used, balanced within one.
-        counts = Counter(e.distractor for e in s.schedule)
-        assert len(counts) == 2 and max(counts.values()) - min(counts.values()) <= 1
         # Distractor positions are balanced like target positions (no spatial shortcut).
         d_counts = Counter(e.distractor_position for e in s.schedule)
         assert set(d_counts) == set(plan.positions)
         assert max(d_counts.values()) - min(d_counts.values()) <= 1
 
 
-def test_distractor_falls_back_to_same_type_when_only_one_type(raw):
-    blocks_only = replace(parse(raw), objects=tuple(
-        ObjectSpec(c, "block") for c in ("red", "blue", "green")))
-    assert distractor_candidates(blocks_only, ObjectSpec("red", "block")) == [
-        ObjectSpec("blue", "block"), ObjectSpec("green", "block")]
+def test_every_session_has_both_distractor_kinds():
+    plan = load_plan(PLAN_PATH)
+    for s in sessions(plan):
+        kinds = Counter(e.distractor_kind for e in s.schedule)
+        assert set(kinds) == {SAME_TYPE, OTHER_TYPE}
+        assert abs(kinds[SAME_TYPE] - kinds[OTHER_TYPE]) <= 1
+        for e in s.schedule:
+            same = e.distractor.type == s.object.type
+            assert e.distractor_kind == (SAME_TYPE if same else OTHER_TYPE)
+        # Within a kind, its candidate objects are used evenly.
+        for kind in (SAME_TYPE, OTHER_TYPE):
+            used = Counter(e.distractor for e in s.schedule if e.distractor_kind == kind)
+            assert set(used) == set(distractor_candidates(plan, s.object)[kind])
+            assert max(used.values()) - min(used.values()) <= 1
+
+
+def test_distractor_candidates_by_kind():
+    plan = load_plan(PLAN_PATH)
+    assert distractor_candidates(plan, ObjectSpec("red", "block")) == {
+        SAME_TYPE: [ObjectSpec("blue", "block"), ObjectSpec("green", "block")],
+        OTHER_TYPE: [ObjectSpec("blue", "cup"), ObjectSpec("green", "cup")],
+    }
+
+
+def test_one_type_inventory_has_no_other_type_candidates(raw):
+    plan = parse(raw)
+    one_type = replace(plan, objects=tuple(o for o in plan.objects if o.type == "block"))
+    assert distractor_candidates(one_type, ObjectSpec("red", "block"))[OTHER_TYPE] == []
 
 
 def test_no_distractor_leaves_fields_empty(raw):
     raw["distractor"] = False
     for s in sessions(parse(raw)):
-        assert all(e.distractor is None and e.distractor_position is None for e in s.schedule)
+        assert all(e.distractor is None and e.distractor_position is None
+                   and e.distractor_kind is None for e in s.schedule)
         assert {e.target_position for e in s.schedule} == {"P1", "P2", "P3", "P4", "P5"}

@@ -28,6 +28,11 @@ _PLAN_KEYS = {
 _SESSION_KEYS = {"color", "type", "episodes"}
 _NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
+# Distractor kinds. Both differ from the target object in color; a same-type
+# distractor makes the color word necessary, an other-type one the type word.
+SAME_TYPE = "same_type"
+OTHER_TYPE = "other_type"
+
 
 class PlanError(ValueError):
     pass
@@ -47,6 +52,7 @@ class EpisodeLayout:
     target_position: str
     distractor: ObjectSpec | None
     distractor_position: str | None
+    distractor_kind: str | None = None  # SAME_TYPE or OTHER_TYPE
 
 
 @dataclass(frozen=True)
@@ -189,8 +195,9 @@ def parse_plan(raw: dict, path: Path, task_spec: dict) -> Plan:
         render_instruction(template, obj, target)
     if distractor:
         for obj, _ in plan.session_objects:
-            if not distractor_candidates(plan, obj):
-                raise PlanError(f"no distractor in objects differs in color from {obj}")
+            for kind, candidates in distractor_candidates(plan, obj).items():
+                if not candidates:
+                    raise PlanError(f"objects have no {kind} distractor of another color for {obj}")
     return plan
 
 
@@ -231,11 +238,23 @@ def load_plan(path: str | Path, tasks_dir: Path = TASKS_DIR) -> Plan:
         raise PlanError(f"{path}: {exc}") from None
 
 
-def distractor_candidates(plan: Plan, obj: ObjectSpec) -> list[ObjectSpec]:
-    """Objects that differ in color, preferring ones that also differ in type."""
+def distractor_candidates(plan: Plan, obj: ObjectSpec) -> dict[str, list[ObjectSpec]]:
+    """Objects of another color, by kind: same type as obj, or another type."""
     other_color = [o for o in plan.objects if o.color != obj.color]
-    both = [o for o in other_color if o.type != obj.type]
-    return sorted(both or other_color)
+    return {
+        SAME_TYPE: sorted(o for o in other_color if o.type == obj.type),
+        OTHER_TYPE: sorted(o for o in other_color if o.type != obj.type),
+    }
+
+
+def _balanced(rng: random.Random, items: list[ObjectSpec], count: int) -> list[ObjectSpec]:
+    """count picks, every item once per round, round order shuffled."""
+    picks: list[ObjectSpec] = []
+    while len(picks) < count:
+        round_ = list(items)
+        rng.shuffle(round_)
+        picks.extend(round_)
+    return picks[:count]
 
 
 def _schedule(plan: Plan, index: int, obj: ObjectSpec, n: int) -> tuple[EpisodeLayout, ...]:
@@ -243,16 +262,18 @@ def _schedule(plan: Plan, index: int, obj: ObjectSpec, n: int) -> tuple[EpisodeL
     rng = random.Random(f"{plan.seed}/{index}")
     order = list(plan.positions)
     rng.shuffle(order)
-    candidates = distractor_candidates(plan, obj) if plan.distractor else []
-    picks: list[ObjectSpec] = []
-    while len(picks) < n and candidates:
-        # Balanced: every candidate once per round, round order shuffled.
-        round_ = list(candidates)
-        rng.shuffle(round_)
-        picks.extend(round_)
     targets = [order[i % len(order)] for i in range(n)]
     if not plan.distractor:
         return tuple(EpisodeLayout(t, None, None) for t in targets)
+
+    # Kinds alternate, so each session needs both the color and the type word;
+    # the seed picks which kind comes first (and gets the extra one when n is odd).
+    first, second = (SAME_TYPE, OTHER_TYPE) if rng.random() < 0.5 else (OTHER_TYPE, SAME_TYPE)
+    kinds = [first if i % 2 == 0 else second for i in range(n)]
+    candidates = distractor_candidates(plan, obj)
+    pools = {kind: _balanced(rng, candidates[kind], kinds.count(kind)) for kind in (first, second)}
+    distractors = [pools[kind].pop(0) for kind in kinds]
+
     # Distractor positions are balanced like target positions, so neither
     # becomes a spatial shortcut: each round of len(positions) episodes uses
     # every position at most once, drawn until none collides with its target.
@@ -265,7 +286,8 @@ def _schedule(plan: Plan, index: int, obj: ObjectSpec, n: int) -> tuple[EpisodeL
             if all(d != t for d, t in zip(draw, round_targets)):
                 break
         d_positions.extend(draw)
-    return tuple(EpisodeLayout(t, picks[i], d_positions[i]) for i, t in enumerate(targets))
+    return tuple(EpisodeLayout(t, d, p, k)
+                 for t, d, p, k in zip(targets, distractors, d_positions, kinds))
 
 
 def sessions(plan: Plan) -> list[Session]:

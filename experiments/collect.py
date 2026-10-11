@@ -8,8 +8,12 @@ Each session prints a setup card (instruction and the per-episode layout to set
 during each reset period), waits for Enter, runs lerobot-record with that
 session's instruction, then checks the dataset metadata against what was asked
 and appends one line to data/raw/<dataset>.collection.jsonl. That ledger is
-append-only; `--session=next` (the default) picks the first session without an
-ok line. Nothing here deletes or rewrites episodes.
+append-only. Nothing here deletes or rewrites episodes.
+
+--session=remaining (the default) runs every session without an ok line in plan
+order, stopping at the first failure, mismatch or Ctrl+C; answering q at a
+prompt stops cleanly. A rerun continues from the first session without an ok
+line. --session=next runs only that session, --session=<n> only session n.
 
 lerobot-record behaviour this relies on, read from the v0.6.1 tag of
 src/lerobot/scripts/lerobot_record.py and datasets/:
@@ -279,10 +283,131 @@ def check_state(root: Path, lines: list[dict], plan_sha: str) -> tuple[int | Non
     return count, problems
 
 
+def _prompt(session: Session) -> str:
+    """'record', 'quit' or 'interrupted', from the operator at the keyboard."""
+    while True:
+        try:
+            answer = input(f"Place {session.object} + distractor, then Enter to record (q to stop): ")
+        except KeyboardInterrupt:
+            print()
+            return "interrupted"
+        except EOFError:
+            print()
+            return "quit"
+        answer = answer.strip().lower()
+        if answer == "":
+            return "record"
+        if answer == "q":
+            return "quit"
+        print("press Enter to record, or q to stop")
+
+
+def run_session(plan: Plan, plan_path: Path, plan_sha: str, session: Session, root: Path,
+                ledger: Path, lines: list[dict], exe: str, version: str | None) -> tuple[str, str]:
+    """Prompt for, record, verify and log one session.
+
+    Returns (outcome, reason): outcome is ok, mismatch, quit, interrupted or
+    error. A ledger line is appended (and added to `lines`) whenever
+    lerobot-record ran.
+    """
+    done, recorded = progress(lines, session.index)
+    remaining = session.num_episodes - recorded
+    if done or remaining <= 0:
+        return "error", (f"session {session.index} already has {recorded}/{session.num_episodes} "
+                         f"episodes{'' if done else ' but no ok line'}; recording it again would "
+                         "exceed the plan. Check the ledger by hand")
+    count = read_episode_count(root)
+    before = count or 0
+    resume = count is not None
+    cmd = build_argv(exe, hardware_args(), plan, session, root, remaining, resume)
+    print()
+    print(setup_card(plan, session, recorded, remaining, before))
+    print("\n$ " + show_argv(cmd) + "\n")
+    answer = _prompt(session)
+    if answer != "record":
+        return answer, "operator stopped before recording; nothing written"
+
+    interrupted = False
+    started = _now()
+    proc = subprocess.Popen(cmd)
+    while True:
+        try:
+            exit_code = proc.wait()
+            break
+        except KeyboardInterrupt:
+            # The child got the same Ctrl+C; let it finalize the dataset, then log what happened.
+            interrupted = True
+            print("\nwaiting for lerobot-record to finalize the dataset...")
+    ended = _now()
+
+    after, problems = verify(root, before, remaining, session.instruction, exit_code)
+    added = max(0, (after or before) - before)
+    layouts = [
+        {"episode_index": before + i, "target_position": layout.target_position,
+         "distractor": None if layout.distractor is None else str(layout.distractor),
+         "distractor_kind": layout.distractor_kind,
+         "distractor_position": layout.distractor_position}
+        for i, layout in enumerate(session.schedule[recorded:recorded + min(added, remaining)])
+    ]
+    status = "ok" if not problems else "mismatch"
+    record = {
+        "session": session.index,
+        "object": str(session.object),
+        "instruction": session.instruction,
+        "planned_episodes": session.num_episodes,
+        "requested_episodes": remaining,
+        "episodes_before": before,
+        "episodes_after": after,
+        "resume": resume,
+        "started_at": started,
+        "ended_at": ended,
+        "lerobot_exit_code": exit_code,
+        "lerobot_version": version,
+        "git_commit": _git("rev-parse", "HEAD") or "unknown",
+        "git_dirty": bool(_git("status", "--porcelain")),
+        "plan": _rel(plan_path),
+        "plan_sha256": plan_sha,
+        "argv": cmd,
+        "layouts": layouts,
+        "status": status,
+        "ok": status == "ok",
+        "interrupted": interrupted,
+        "problems": problems,
+    }
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with ledger.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    lines.append(record)
+
+    print(f"\nsession {session.index}: {status}, episodes {before} -> {after}; logged to {ledger}")
+    for problem in problems:
+        print(f"[!!] {problem}")
+    if problems:
+        print("Nothing was deleted. Rerunning this session records only the episodes still missing.")
+    if interrupted:
+        return "interrupted", "Ctrl+C during recording"
+    if problems:
+        return "mismatch", "; ".join(problems)
+    return "ok", ""
+
+
+def print_summary(plan: Plan, root: Path, ledger: Path, done_now: list[int]) -> None:
+    try:
+        count = read_episode_count(root) or 0
+    except (OSError, ValueError, KeyError):
+        count = "unreadable"
+    print("\n== summary")
+    print(f"sessions ok this run : {', '.join(map(str, done_now)) or 'none'}")
+    print(f"dataset episodes     : {count} / {plan.total_episodes} planned")
+    print(f"ledger               : {ledger}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--plan", required=True, type=Path)
-    parser.add_argument("--session", default="next", help="1-based session number, or 'next' (default)")
+    parser.add_argument("--session", default="remaining",
+                        help="'remaining' (default): all sessions without an ok line; "
+                             "'next': only the first of them; or a 1-based session number")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
@@ -297,7 +422,12 @@ def main(argv: list[str] | None = None) -> int:
     ledger = ledger_path(plan)
     lines = read_ledger(ledger)
     count, problems = check_state(root, lines, plan_sha)
-    selected = pick_session(all_sessions, lines, args.session)
+    if args.session == "remaining":
+        queue = [s for s in all_sessions if not progress(lines, s.index)[0]]
+        selected = None
+    else:
+        selected = pick_session(all_sessions, lines, args.session)
+        queue = [] if selected is None else [selected]
     exe = shutil.which("lerobot-record")
 
     if args.dry_run:
@@ -333,16 +463,10 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(f"[!!] {problem}", file=sys.stderr)
         return 1
-    if selected is None:
+    if not queue:
         print(f"all {len(all_sessions)} sessions have an ok line in {ledger}")
+        print_summary(plan, root, ledger, [])
         return 0
-    done, recorded = progress(lines, selected.index)
-    remaining = selected.num_episodes - recorded
-    if done or remaining <= 0:
-        print(f"[!!] session {selected.index} already has {recorded}/{selected.num_episodes} episodes"
-              f"{'' if done else ' but no ok line'}; recording it again would exceed the plan. "
-              "Check the ledger by hand.", file=sys.stderr)
-        return 1
     if exe is None:
         print("lerobot-record not found on PATH; activate the lerobot environment", file=sys.stderr)
         return 1
@@ -356,69 +480,23 @@ def main(argv: list[str] | None = None) -> int:
         found = f"lerobot {version} is installed" if version else "lerobot is not importable from this Python"
         print(f"[!!] {found}; this tool's resume/num_episodes handling was checked against {LEROBOT_CHECKED}")
 
-    before = count or 0
-    resume = count is not None
-    cmd = build_argv(exe, hardware_args(), plan, selected, root, remaining, resume)
-    print(setup_card(plan, selected, recorded, remaining, before))
-    print("\n$ " + show_argv(cmd) + "\n")
-    try:
-        input("Set up the scene for the first episode above, then press Enter to start (Ctrl-C aborts) ")
-    except (KeyboardInterrupt, EOFError):
-        print("\naborted before recording; nothing written")
-        return 1
-
-    started = _now()
-    proc = subprocess.Popen(cmd)
-    while True:
-        try:
-            exit_code = proc.wait()
-            break
-        except KeyboardInterrupt:
-            # The child got the same Ctrl-C; let it finalize the dataset, then log what happened.
-            print("\nwaiting for lerobot-record to finalize the dataset...")
-    ended = _now()
-
-    after, problems = verify(root, before, remaining, selected.instruction, exit_code)
-    added = max(0, (after or before) - before)
-    layouts = [
-        {"episode_index": before + i, "target_position": layout.target_position,
-         "distractor": None if layout.distractor is None else str(layout.distractor),
-         "distractor_position": layout.distractor_position}
-        for i, layout in enumerate(selected.schedule[recorded:recorded + min(added, remaining)])
-    ]
-    status = "ok" if not problems else "mismatch"
-    record = {
-        "session": selected.index,
-        "object": str(selected.object),
-        "instruction": selected.instruction,
-        "planned_episodes": selected.num_episodes,
-        "requested_episodes": remaining,
-        "episodes_before": before,
-        "episodes_after": after,
-        "resume": resume,
-        "started_at": started,
-        "ended_at": ended,
-        "lerobot_exit_code": exit_code,
-        "lerobot_version": version,
-        "git_commit": _git("rev-parse", "HEAD") or "unknown",
-        "git_dirty": bool(_git("status", "--porcelain")),
-        "plan": _rel(args.plan),
-        "plan_sha256": plan_sha,
-        "argv": cmd,
-        "layouts": layouts,
-        "status": status,
-        "problems": problems,
-    }
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    with ledger.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
-
-    print(f"\nsession {selected.index}: {status}, episodes {before} -> {after}; logged to {ledger}")
-    for problem in problems:
-        print(f"[!!] {problem}")
-    if problems:
-        print("Nothing was deleted. Rerunning this session records only the episodes still missing.")
-    return 0 if status == "ok" else 2
+    done_now: list[int] = []
+    for session in queue:
+        outcome, reason = run_session(plan, args.plan, plan_sha, session, root, ledger, lines,
+                                      exe, version)
+        if outcome == "ok":
+            done_now.append(session.index)
+            continue
+        if outcome == "quit":
+            print(f"\nstopped by the operator before session {session.index} ({session.object})")
+            print_summary(plan, root, ledger, done_now)
+            return 0
+        print(f"\n[!!] stopped at session {session.index} ({session.object}): {reason}",
+              file=sys.stderr)
+        print_summary(plan, root, ledger, done_now)
+        return {"interrupted": 130, "mismatch": 2}.get(outcome, 1)
+    print_summary(plan, root, ledger, done_now)
+    return 0
 
 
 if __name__ == "__main__":
