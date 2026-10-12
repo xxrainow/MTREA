@@ -21,6 +21,30 @@ Concrete rule, per task family:
 - Each episode's concrete instruction — the actual `{object}`/`{target}` filled
   in — is recorded in the LeRobotDataset with that episode, not in the yaml.
 
+## Collection plan
+
+`lerobot-record` attaches one instruction to a whole run, so a family's demos
+are recorded as **sessions**, one per concrete object, appended to a single
+dataset. Before recording, the sessions are fixed in `plans/<dataset>.yaml`:
+objects, target, distractor, tape-marked positions, episodes per session,
+timing, and the seed for the per-episode layout. `plan.py` validates it against
+the task yaml and the Object diversity rule above and expands it into sessions.
+
+- Run it with `python experiments/collect.py --plan=research/collect/plans/<dataset>.yaml`
+  (`--dry-run` first). One invocation runs every session not yet recorded, in
+  plan order, and stops at the first failure. Each session prints a setup
+  card: the instruction and, per episode, where to put the target object and
+  the distractor during the reset period before it.
+- The distractor always has another color than the target object and
+  alternates between the same type and another type, so the policy needs both
+  the color and the type word of the instruction.
+- Every run appends one line to `data/raw/<dataset>.collection.jsonl` with the
+  episodes before/after, the per-episode layouts, the git commit and an
+  ok/mismatch verdict. The ledger is append-only, and the dataset is never
+  edited to make it agree.
+- A plan is not edited after its first session has been recorded. A changed
+  plan is a new file with a new dataset name.
+
 ## Evaluation protocol
 
 Held-out tasks are never teleop-recorded for training. Their `role: held_out`

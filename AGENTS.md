@@ -80,6 +80,10 @@ enforces this; a violation is a failing test, not a style opinion.
   across all parquet files and within each episode. `--check-videos` additionally
   decodes all MP4s with ffmpeg. Passing does not establish training compatibility,
   camera identity, synchronization, or demonstration quality.
+- T_sub demos are recorded with `experiments/collect.py` from a fixed plan in
+  `research/collect/plans/*.yaml` (one lerobot-record session per object,
+  appended with `--resume`). Its ledger `data/raw/<dataset>.collection.jsonl`
+  is append-only, like rollout results.
 - Every training run gets a directory under `data/runs/<run_id>/` holding its
   resolved config, `metrics.jsonl`, and checkpoints. Nothing about a run is
   reconstructed from memory or from the command line after the fact.
@@ -110,6 +114,10 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
 
 ## Boundaries
 
+- One process at a time holds the SO-101 arms. `lab/core/hardware/lock.py`
+  (`data/locks/hardware.lock`) is taken by calibration, teleoperation and
+  `experiments/collect.py`; any new code that opens the serial ports takes it
+  too.
 - Never commit anything under `data/`, `.env`, or calibration files.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.

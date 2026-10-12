@@ -1,0 +1,38 @@
+# Collection plan for the pick_place T_sub demos. Data only; validated and
+# expanded into sessions by research/collect/plan.py, run on the robot by
+# experiments/collect.py. Fixed before recording: changing anything here after
+# a session has been recorded makes the ledger disagree with the dataset, so a
+# new plan gets a new file and a new dataset name.
+task: pick_place            # instruction_template comes from tasks/pick_place.yaml
+dataset: pick_place_v1      # -> data/raw/pick_place_v1, repo_id local/pick_place_v1
+seed: 20261011              # per-episode layout schedule
+
+target: bowl                # the single container every object is placed in
+# Every episode has exactly one other object on the table, always of another
+# color than the target object. Within each session it alternates between two
+# kinds, so both words of the instruction are needed to pick the right one:
+#   same type, other color  (red block vs blue block)  -> the color decides
+#   other type, other color (red block vs blue cup)    -> the type decides
+distractor: true
+
+# Tape marks on the table where an object is placed at reset, numbered
+# left to right as seen from the scene camera. The bowl stays at its own fixed
+# mark, which is not one of these.
+positions: [P1, P2, P3, P4, P5]
+
+# Physical inventory; distractors are drawn from it.
+objects:
+  types: [block, cup]
+  colors: [red, blue, green]
+
+# One lerobot-record run per object, all appended to the same dataset.
+sessions:
+  - {color: red,   type: block, episodes: 9}
+  - {color: blue,  type: block, episodes: 8}
+  - {color: green, type: block, episodes: 8}
+  - {color: red,   type: cup,   episodes: 9}
+  - {color: blue,  type: cup,   episodes: 8}
+  - {color: green, type: cup,   episodes: 8}
+
+episode_time_s: 20
+reset_time_s: 15
