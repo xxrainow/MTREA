@@ -67,6 +67,14 @@
   padding: 24px 12px;
   background: var(--lab-sidebar);
   border-right: 1px solid var(--lab-border);
+
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  z-index: 20;
 }
 
 .app-brand {
@@ -83,7 +91,7 @@
   height: 32px;
   border-radius: 4px;
   background: var(--lab-accent-text);
-  color: #181b21;
+  color: var(--lab-text);
   font-weight: 600;
 }
 
@@ -143,6 +151,10 @@
   border-bottom: 1px solid var(--lab-border);
   background: var(--lab-header);
   font-size: 12px;
+
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .app-preview-label {
@@ -170,4 +182,33 @@
   .app-content {
     padding: 16px;
   }
+}
+
+.app-connection-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-right: 10px;
+}
+
+.app-connection-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--lab-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.app-connection-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--lab-muted);
+}
+
+.app-connection-value {
+  color: var(--lab-muted);
 }

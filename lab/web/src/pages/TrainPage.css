@@ -1,0 +1,272 @@
+.train-page {
+  min-width: 0;
+}
+
+.train-heading {
+  margin-bottom: 24px;
+}
+
+.train-heading h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+}
+
+.train-heading p {
+  margin: 0;
+  color: var(--lab-muted);
+  font-size: 14px;
+}
+
+.train-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--lab-border);
+}
+
+.train-tabs button {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--lab-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.train-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--lab-accent);
+  color: var(--lab-accent);
+}
+
+.train-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.train-panel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--lab-border);
+  border-radius: 6px;
+  background: var(--lab-panel);
+}
+
+.train-panel h2 {
+  margin: 0 0 20px;
+  font-size: 18px;
+}
+
+.train-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 16px;
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.train-field input,
+.train-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-control);
+  color: var(--lab-text);
+  font: inherit;
+}
+
+.train-field-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.train-details {
+  margin: 0 0 20px;
+}
+
+.train-details > div {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--lab-border);
+  font-size: 13px;
+}
+
+.train-details dt {
+  color: var(--lab-muted);
+}
+
+.train-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.train-checks,
+.train-charts,
+.train-log-panel {
+  margin-top: 20px;
+}
+
+.train-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.train-panel button {
+  padding: 10px 16px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-control);
+  color: var(--lab-text);
+  font: inherit;
+}
+
+.train-panel .train-button-primary {
+  border-color: transparent;
+  background: var(--lab-accent);
+  color: var(--lab-accent-text);
+}
+
+.train-panel button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.train-note,
+.train-empty {
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.train-note {
+  margin: 16px 0 0;
+}
+
+.train-chart-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  padding: 16px;
+  border: 1px dashed var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-background);
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.train-log {
+  margin: 0;
+  padding: 16px;
+  border-radius: 4px;
+  background: var(--lab-log-background);
+  color: var(--lab-log-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .train-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .train-field-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.train-monitor-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 20px;
+}
+
+.train-runs {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.train-runs-list {
+  flex: 1;
+  min-width: 0;
+  max-height: 720px;
+  overflow-y: auto;
+}
+
+.train-monitor-main {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.train-monitor-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .train-monitor-layout {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .train-monitor-charts {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 800px) {
+  .train-monitor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .train-runs-list {
+    max-height: 240px;
+  }
+}
+
+.train-checkpoints-table-wrapper {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.train-checkpoints-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.train-checkpoints-table th,
+.train-checkpoints-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--lab-border);
+  text-align: left;
+}
+
+.train-checkpoints-table th {
+  background: var(--lab-control);
+  color: var(--lab-muted);
+  font-weight: 400;
+}
+
+.train-checkpoints-table td {
+  overflow-wrap: anywhere;
+}
+
+.train-checkpoints-empty {
+  color: var(--lab-muted);
+}

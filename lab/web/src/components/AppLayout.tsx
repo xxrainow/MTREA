@@ -56,14 +56,27 @@ function AppLayout({ children, activePage, onPageChange }: AppLayoutProps) {
           <span>MTREA LAB / {activePage}</span>
 
           <div className="app-header-actions">
-            <span className="app-preview-label">UI developing...</span>
+            <div
+              className="app-connection-status"
+              aria-label="Connection status"
+            >
+              {['Robot', 'GPU', 'Policy'].map((label) => (
+                <span className="app-connection-item" key={label}>
+                  <span className="app-connection-dot" aria-hidden="true" />
+                  <span>{label}</span>
+                  <span className="app-connection-value">Not checked</span>
+                </span>
+              ))}
+            </div>
             <button
               type="button"
               className="app-theme-button"
               onClick={() =>
                 setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
               }
-            >{theme === 'dark' ? '☼' : '☽'}</button>
+            >
+              {theme === 'dark' ? '☼' : '☽'}
+            </button>
           </div>
         </header>
 

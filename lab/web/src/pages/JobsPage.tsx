@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import './JobsPage.css';
 
 type Job = {
@@ -11,6 +11,14 @@ type Job = {
   status: string;
   pid: number | null;
   submitted_at: string;
+};
+
+const statusLabels: Record<string, string> = {
+  running: 'Running',
+  done: 'Done',
+  failed: 'Failed',
+  stopped: 'Stopped',
+  unknown: 'Unknown',
 };
 
 function JobsPage() {
@@ -149,99 +157,165 @@ function JobsPage() {
 
   return (
     <main className="jobs-page">
-      <h1>MTREA Lab</h1>
-      <h2>Jobs</h2>
+      <div className="jobs-heading">
+        <div>
+          <h1>Jobs</h1>
+          <p>Check the job status and perform log retrieval and termination.</p>
+        </div>
 
-      <button
-        type="button"
-        onClick={handleRefresh}
-        disabled={loading || stoppingJobId !== null}
-      >
-        {loading ? 'Loading…' : 'Refresh'}
-      </button>
+        <button
+          type="button"
+          className="jobs-button"
+          onClick={handleRefresh}
+          disabled={loading || stoppingJobId !== null}
+        >
+          {loading ? 'loading...' : 'Refresh'}
+        </button>
+      </div>
 
-      {loading && <p role="status">Loading jobs…</p>}
+      <section className="jobs-panel" aria-label="Job list">
+        <div className="jobs-panel-header">
+          <h2>Job list</h2>
+          <span className="jobs-count">
+            {loading ? 'loading' : `${jobs.length}`}
+          </span>
+        </div>
 
-      {error && <p role="alert">{error}</p>}
+        {loading && <p role="status">Loading jobs</p>}
 
-      {!loading && !error && jobs.length === 0 && <p>No jobs found.</p>}
+        {error && <p role="alert">{error}</p>}
 
-      {!loading && jobs.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Job name</th>
-              <th>Type</th>
-              <th>Executor</th>
-              <th>Status</th>
-              <th>PID</th>
-              <th>Submitted at</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+        {!loading && !error && jobs.length === 0 && (
+          <p className="jobs-empty">No jobs</p>
+        )}
 
-          <tbody>
-            {jobs.map((job) => (
-              <tr key={job.id}>
-                <td>{job.spec.label || job.id}</td>
-                <td>{job.spec.kind}</td>
-                <td>{job.spec.executor}</td>
-                <td>{job.status}</td>
-                <td>{job.pid ?? '—'}</td>
-                <td>{new Date(job.submitted_at).toLocaleString('en-US')}</td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => void handleStop(job.id)}
-                    disabled={
-                      job.status !== 'running' ||
-                      stoppingJobId !== null ||
-                      loading
-                    }
-                  >
-                    {stoppingJobId === job.id ? 'Stopping…' : 'Stop'}
-                  </button>
-                  <button type="button" onClick={() => handleViewLog(job.id)}>
-                    View logs
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+        {!loading && !error && jobs.length > 0 && (
+          <div className="jobs-table-wrapper">
+            <table className="jobs-table">
+              <thead>
+                <tr>
+                  <th scope="col">Job name</th>
+                  <th scope="col">Spec</th>
+                  <th scope="col">Executor</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">PID</th>
+                  <th scope="col">Started time</th>
+                  <th scope="col">Configuration</th>
+                </tr>
+              </thead>
 
-      {selectedJobId !== null && (
-        <section className="job-logs" aria-label="Job logs">
-          <h2>Logs</h2>
-          <p>Job ID: {selectedJobId}</p>
-          <p>Last 100 lines</p>
+              <tbody>
+                {jobs.map((job) => (
+                  <Fragment key={job.id}>
+                    <tr>
+                      <td>
+                        <span className="jobs-name">
+                          {job.spec.label || job.id}
+                        </span>
+                        {job.spec.label && (
+                          <span className="jobs-id">{job.id}</span>
+                        )}
+                      </td>
 
-          <button
-            type="button"
-            onClick={() => handleViewLog(selectedJobId)}
-            disabled={logLoading}
-          >
-            {logLoading ? 'Loading…' : 'Refresh logs'}
-          </button>
+                      <td>{job.spec.kind}</td>
+                      <td>{job.spec.executor}</td>
 
-          <button type="button" onClick={() => setSelectedJobId(null)}>
-            Close
-          </button>
+                      <td>
+                        <span
+                          className={`jobs-status jobs-status-${job.status}`}
+                        >
+                          {statusLabels[job.status] || job.status}
+                        </span>
+                      </td>
 
-          {logLoading && <p role="status">Loading logs…</p>}
+                      <td>{job.pid ?? '—'}</td>
+                      <td>{new Date(job.submitted_at).toLocaleString('en-US')}</td>
 
-          {logError && <p role="alert">{logError}</p>}
+                      <td>
+                        <div className="jobs-actions">
+                          <button
+                            type="button"
+                            className="jobs-button"
+                            aria-expanded={selectedJobId === job.id}
+                            onClick={() => {
+                              if (selectedJobId === job.id) {
+                                setSelectedJobId(null);
+                              } else {
+                                handleViewLog(job.id);
+                              }
+                            }}
+                          >
+                            {selectedJobId === job.id ? 'Log close' : 'Log'}
+                          </button>
 
-          {!logLoading &&
-            !logError &&
-            (logContent.length > 0 ? (
-              <pre className="log-output">{logContent}</pre>
-            ) : (
-              <p>No log output available.</p>
-            ))}
-        </section>
-      )}
+                          <button
+                            type="button"
+                            className="jobs-button"
+                            onClick={() => void handleStop(job.id)}
+                            disabled={
+                              job.status !== 'running' ||
+                              stoppingJobId !== null ||
+                              loading
+                            }
+                          >
+                            {stoppingJobId === job.id ? 'stopping' : 'stopped'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {selectedJobId === job.id && (
+                      <tr className="jobs-log-row">
+                        <td colSpan={7}>
+                          <section
+                            className="jobs-inline-log"
+                            aria-label={`${job.spec.label || job.id} log`}
+                          >
+                            <div className="jobs-panel-header">
+                              <div>
+                                <h3>Logs</h3>
+                                <p className="jobs-log-description">
+                                  Last 100 lines
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                className="jobs-button"
+                                onClick={() => handleViewLog(job.id)}
+                                disabled={logLoading}
+                              >
+                                {logLoading ? 'Loading' : 'Log Refresh'}
+                              </button>
+                            </div>
+
+                            {logLoading && <p role="status">Loading logs</p>}
+
+                            {logError && <p role="alert">{logError}</p>}
+
+                            {!logLoading &&
+                              !logError &&
+                              (logContent.length > 0 ? (
+                                <pre className="log-output">{logContent}</pre>
+                              ) : (
+                                <p className="jobs-empty">No logs.</p>
+                              ))}
+                          </section>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <p className="jobs-note">
+          The result is "Unknown" because the process has been terminated, but
+          the exit code has not been obtained.
+        </p>
+      </section>
     </main>
   );
 }
