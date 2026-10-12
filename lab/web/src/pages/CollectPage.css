@@ -1,0 +1,207 @@
+.collect-page {
+  min-width: 0;
+}
+
+.collect-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.collect-heading h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+}
+
+.collect-heading p {
+  margin: 0;
+  color: var(--lab-muted);
+  font-size: 14px;
+}
+
+.collect-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: 20px;
+}
+
+.collect-main {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.collect-panel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--lab-border);
+  border-radius: 6px;
+  background: var(--lab-panel);
+}
+
+.collect-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.collect-panel h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.collect-status {
+  padding: 4px 8px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  color: var(--lab-muted);
+  font-size: 12px;
+}
+
+.collect-cameras {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.collect-camera {
+  min-width: 0;
+  margin: 0;
+}
+
+.collect-camera figcaption {
+  margin-bottom: 10px;
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.collect-camera-placeholder {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  padding: 16px;
+  border: 1px dashed var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-background);
+  color: var(--lab-muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+.collect-details {
+  margin: 0 0 20px;
+}
+
+.collect-details > div {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--lab-border);
+  font-size: 13px;
+}
+
+.collect-details dt {
+  color: var(--lab-muted);
+}
+
+.collect-details dd {
+  margin: 0;
+}
+
+.collect-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 16px;
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.collect-field input,
+.collect-field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-control);
+  color: var(--lab-text);
+  font: inherit;
+}
+
+.collect-field textarea {
+  resize: vertical;
+}
+
+.collect-field-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.collect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.collect-button {
+  padding: 10px 16px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-control);
+  color: var(--lab-text);
+  font: inherit;
+}
+
+.collect-button-primary {
+  border-color: transparent;
+  background: var(--lab-accent);
+  color: var(--lab-accent-text);
+}
+
+.collect-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.collect-log {
+  margin: 0;
+  padding: 16px;
+  border-radius: 4px;
+  background: var(--lab-log-background);
+  color: var(--lab-log-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.collect-note {
+  margin: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--lab-border);
+  color: var(--lab-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .collect-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .collect-cameras,
+  .collect-field-pair {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,148 @@
+.devices-page {
+  min-width: 0;
+}
+
+.devices-heading {
+  margin-bottom: 24px;
+}
+
+.devices-heading h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+}
+
+.devices-heading p,
+.device-description {
+  margin: 0;
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.devices-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.device-panel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--lab-border);
+  border-radius: 6px;
+  background: var(--lab-panel);
+}
+
+.device-panel h2,
+.devices-section-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.device-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.device-status {
+  padding: 4px 8px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  color: var(--lab-muted);
+  font-size: 12px;
+}
+
+.device-details {
+  margin: 20px 0;
+}
+
+.device-details > div {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--lab-border);
+  font-size: 13px;
+}
+
+.device-details dt {
+  color: var(--lab-muted);
+}
+
+.device-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.device-panel button {
+  padding: 10px 14px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-control);
+  color: var(--lab-text);
+  font: inherit;
+}
+
+.device-panel button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.devices-calibration {
+  margin-top: 24px;
+}
+
+.calibration-steps {
+  display: grid;
+  gap: 16px;
+  padding-left: 24px;
+  margin: 20px 0;
+}
+
+.calibration-steps strong {
+  font-weight: 500;
+}
+
+.calibration-steps span {
+  display: block;
+  margin-top: 5px;
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+.devices-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 28px 0 16px;
+}
+
+.device-camera-placeholder {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  margin: 16px 0;
+  border: 1px dashed var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-background);
+  color: var(--lab-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .devices-grid {
+    grid-template-columns: 1fr;
+  }
+}
