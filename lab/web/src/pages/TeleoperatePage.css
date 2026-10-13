@@ -19,7 +19,7 @@
 
 .teleoperate-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   align-items: start;
   gap: 20px;
 }
@@ -103,6 +103,7 @@
 
 .teleoperate-details dd {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .teleoperate-actions {
