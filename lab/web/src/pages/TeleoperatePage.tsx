@@ -179,22 +179,6 @@ function TeleoperatePage() {
             </p>
           </section>
         </div>
-        <section className="teleoperate-panel">
-          <div className="teleoperate-panel-header">
-            <h2>Camera preview</h2>
-            <span className="teleoperate-status">Pending</span>
-          </div>
-          <div className="teleoperate-cameras">
-            {['wrist', 'scene'].map((camera) => (
-              <figure className="teleoperate-camera" key={camera}>
-                <figcaption>{camera}</figcaption>
-                <div className="teleoperate-camera-placeholder">
-                  Camera preview will be connected with collection.
-                </div>
-              </figure>
-            ))}
-          </div>
-        </section>
       </div>
     </main>
   );

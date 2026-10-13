@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import CameraPreviewPanel from '../components/CameraPreviewPanel';
+import { useCameras } from '../hooks/useCameras';
 import './CollectPage.css';
 
 function CollectPage() {
@@ -9,6 +11,9 @@ function CollectPage() {
   const [episodeCount, setEpisodeCount] = useState('10');
   const [episodeSeconds, setEpisodeSeconds] = useState('20');
   const [resetSeconds, setResetSeconds] = useState('5');
+
+  const cameras = useCameras();
+  const cameraStatus = cameras.data?.status;
 
   return (
     <main className="collect-page">
@@ -29,24 +34,7 @@ function CollectPage() {
 
       <div className="collect-layout">
         <div className="collect-main">
-          <section className="collect-panel">
-            <div className="collect-panel-header">
-              <h2>Camera preview</h2>
-              <span className="collect-status">Integration pending</span>
-            </div>
-
-            <div className="collect-cameras">
-              {['wrist', 'scene'].map((camera) => (
-                <figure className="collect-camera" key={camera}>
-                  <figcaption>{camera}</figcaption>
-                  <div className="collect-camera-placeholder">
-                    Live video integration pending
-                  </div>
-                </figure>
-              ))}
-            </div>
-          </section>
-
+          <CameraPreviewPanel cameras={cameras} />
           <section className="collect-panel">
             <div className="collect-panel-header">
               <h2>Recording progress</h2>
@@ -170,7 +158,15 @@ function CollectPage() {
             </div>
             <div>
               <dt>Cameras</dt>
-              <dd>Not checked</dd>
+              <dd>
+                {cameras.unavailable
+                  ? 'Status unavailable'
+                  : cameraStatus?.error
+                    ? 'Preview failed'
+                    : cameraStatus?.running
+                      ? cameraStatus.cameras.join(', ')
+                      : 'Preview stopped'}
+              </dd>
             </div>
           </dl>
         </section>
