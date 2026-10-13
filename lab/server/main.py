@@ -11,6 +11,8 @@ from lab.core.models import Executor
 from lab.core.runner import Runner
 from lab.core.store import JobStore
 from lab.server import hardware_api
+from lab.core.hardware.cameras import CameraService
+from lab.server import camera_api
 
 
 def create_app(data_base: Path | None = None) -> FastAPI:
@@ -30,10 +32,15 @@ def create_app(data_base: Path | None = None) -> FastAPI:
         )
         app.state.runner_lock = Lock()
         app.state.hardware = HardwareService(data_base=resolved_data)
+        app.state.cameras = CameraService()
 
-        yield
-
-        app.state.hardware.shutdown()  # stop any session and release the arms
+        try:
+            yield
+        finally:
+            try:
+                app.state.cameras.stop()
+            finally:
+                app.state.hardware.shutdown()
 
     application = FastAPI(
         title="MTREA Lab",
@@ -56,6 +63,7 @@ def create_app(data_base: Path | None = None) -> FastAPI:
         "/api/jobs/{job_id}/stop", stop_job, methods=["POST"]
     )
     application.include_router(hardware_api.router)
+    application.include_router(camera_api.router)
 
     return application
 

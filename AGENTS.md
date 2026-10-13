@@ -125,6 +125,8 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
 - Never commit anything under `data/`, `.env`, or calibration files.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.
+- Devices and Collect share the backend camera preview service. Page changes do not stop preview. A camera frame-read failure stops all preview cameras and exposes an error in status; reconnecting requires an explicit start.
+
 
 ## Ownership
 

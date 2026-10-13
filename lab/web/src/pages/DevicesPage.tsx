@@ -4,6 +4,9 @@ import type { Arm } from '../api/hardware';
 import { useHardwareAction, useHardwarePoll } from '../hooks/useHardware';
 import './DevicesPage.css';
 
+import CameraPreviewPanel from '../components/CameraPreviewPanel';
+import { useCameras } from '../hooks/useCameras';
+
 function DevicesPage() {
   const { data, error: pollError, refresh } = useHardwarePoll(loadDevices);
   const { act, pending, error: actionError } = useHardwareAction(refresh);
@@ -21,6 +24,9 @@ function DevicesPage() {
   const held = Boolean(config?.lock);
 
   const step = calibration ? `${calibration.arm}:${calibration.state}` : '';
+
+  const cameras = useCameras();
+
 
   function detect(arm: Arm) {
     void act('Starting port detection', async () => {
@@ -320,26 +326,12 @@ function DevicesPage() {
           </button>
         </div>
         <p className="hardware-session-note device-description">
-          Calibration continues when you change pages. Return here to finish or cancel it.
+          Calibration continues when you change pages. Return here to finish or
+          cancel it.
         </p>
       </section>
 
-      <div className="devices-section-heading">
-        <h2>Cameras</h2>
-        <span className="device-description">
-          Camera checks and preview will be connected with collection.
-        </span>
-      </div>
-      <div className="devices-grid">
-        {['wrist', 'scene'].map((camera) => (
-          <section className="device-panel" key={camera}>
-            <h2>{camera}</h2>
-            <div className="device-camera-placeholder">
-              Preview integration pending
-            </div>
-          </section>
-        ))}
-      </div>
+      <CameraPreviewPanel cameras={cameras} />
     </main>
   );
 }

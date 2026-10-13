@@ -205,3 +205,23 @@
     grid-template-columns: 1fr;
   }
 }
+
+.collect-camera-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: #000;
+}
+
+.collect-camera-error {
+  color: #dc2626;
+  overflow-wrap: anywhere;
+}
+
+.collect-panel > .collect-actions + .collect-cameras,
+.collect-camera-error + .collect-cameras {
+  margin-top: 16px;
+}
