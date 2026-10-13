@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import './AppLayout.css';
 
-export const menuItems = [
+const menuItems = [
   'Overview',
   'Devices',
   'Teleoperate',
@@ -23,6 +23,10 @@ type AppLayoutProps = {
 
 function AppLayout({ children, activePage, onPageChange }: AppLayoutProps) {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const content = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    content.current?.scrollTo(0, 0);
+  }, [activePage]);
   return (
     <div className="app-layout" data-theme={theme}>
       <aside className="app-sidebar">
@@ -80,7 +84,7 @@ function AppLayout({ children, activePage, onPageChange }: AppLayoutProps) {
           </div>
         </header>
 
-        <div className="app-content">{children}</div>
+        <div className="app-content" ref={content}>{children}</div>
       </div>
     </div>
   );

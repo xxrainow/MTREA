@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from lab.core import paths
 from lab.server.main import create_app
+from robot.config import JOINT_ORDER
 
 
 @pytest.fixture
@@ -35,6 +36,7 @@ def wait_state(client, state, timeout=5.0):
 def test_config_and_ports(client):
     config = client.get("/api/hardware/config").json()
     assert config["backend"] == "fake"
+    assert config["joint_order"] == JOINT_ORDER
     assert config["arms"]["follower"]["id"] and config["arms"]["leader"]["id"]
     assert config["arms"]["follower"]["calibration_present"] is False
     assert config["arms"]["follower"]["config_file"].replace("\\", "/").endswith("fake/robot_configs/so101_follower.yaml")

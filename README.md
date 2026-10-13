@@ -58,6 +58,37 @@ to `/api/jobs` on port 8001. Keep both servers running.
 This proxy is for local development. Production hosting requires
 a separate configuration.
 
+### Hardware UI
+
+Devices and Teleoperate use the hardware API. On the computer connected to
+the arms, open Devices to set each serial port (choose or type it and save,
+or use Detect port). Detection snapshots the ports first: unplug only the
+selected arm, press Check removed port, plug it back in, then save.
+
+Calibrate each arm from Devices. Follow the status instruction: support the
+arm with torque off, place it near the middle of its range and press Next,
+then move the joints through their full ranges and press Finish and save.
+Cancel exits without saving. The table shows raw encoder readings, not degrees.
+
+Open Teleoperate to start leader-to-follower control. The page shows achieved
+FPS and joint positions from `/ws/joints`; Vite proxies `/ws` with WebSocket
+support alongside `/api`. Rest the follower before pressing Stop: stopping
+disables its torque. Changing pages does not stop calibration or teleoperation;
+return to the corresponding page to cancel or stop. Stop teleoperation before
+starting CLI collection. Camera previews and Collect are still pending.
+
+For UI development without arms, launch the backend in fake mode:
+
+```bash
+MTREA_HARDWARE=fake python -m uvicorn lab.server.main:app --host 127.0.0.1 --port 8001
+```
+
+Both pages explicitly label fake hardware. Fake mode simulates port detection
+and joint motion and writes separate fake calibration files. It permits teleop
+without calibration; real mode requires both calibration files and present
+ports before the UI enables Start. A present port or file alone does not prove
+that the robot can connect; connection errors appear on the page.
+
 ## Lab API
 
 ### Endpoints

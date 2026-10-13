@@ -56,8 +56,8 @@ before invoking.
 
 ```
 lab/core/    robot control, recording, job runner, state — knows nothing about HTTP
-lab/server/  (planned) FastAPI (:8001) + ws.py — receives requests and delegates to core
-lab/web/     (planned) React + Vite (:8080) — buttons and status only, no Python
+lab/server/  FastAPI (:8001) + hardware API/WebSocket — delegates to core
+lab/web/     React + Vite (:8080) — buttons and status only, no Python
 research/    methods, task definitions, eval, analysis
 scripts/     thin shell wrappers over `python -m research.*`
 robot/configs/ so101_follower/leader.yaml, cameras.yaml, remote.yaml (gitignored)
@@ -118,6 +118,10 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
   (`data/locks/hardware.lock`) is taken by calibration, teleoperation and
   `experiments/collect.py`; any new code that opens the serial ports takes it
   too.
+- Devices and Teleoperate use the hardware API; page changes do not stop an
+  active calibration or teleoperation. Return to the page to cancel/stop.
+  Vite proxies `/api` and `/ws` (WebSocket) to the backend. Joint order comes
+  from `robot/config.py` through `/api/hardware/config`, never a web constant.
 - Never commit anything under `data/`, `.env`, or calibration files.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.

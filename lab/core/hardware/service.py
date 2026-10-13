@@ -21,6 +21,7 @@ from lab.core.hardware.devices import (
 from lab.core.hardware.lock import HardwareLock
 from lab.core.hardware.ports import PortDetection, save_port
 from lab.core.hardware.teleop import TeleopSession
+from robot.config import JOINT_ORDER
 
 BACKEND_ENV = "MTREA_HARDWARE"
 
@@ -83,7 +84,8 @@ class HardwareService:
                 # Written by lerobot < 0.6; v0.6.1 ignores it and looks at calibration_file.
                 "legacy_calibration_present": legacy.is_file(),
             }
-        return {"backend": self.backend.name, "arms": arms, "ports": ports, "lock": self.lock.holder()}
+        return {"backend": self.backend.name, "arms": arms, "ports": ports,
+                "joint_order": list(JOINT_ORDER), "lock": self.lock.holder()}
 
     def _ports_or_none(self) -> list[str] | None:
         try:

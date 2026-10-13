@@ -2,6 +2,58 @@
   min-width: 0;
 }
 
+.hardware-feedback {
+  margin-bottom: 20px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.hardware-feedback [role='alert'],
+.device-panel [role='alert'] {
+  padding: 12px;
+  border: 1px solid var(--lab-border);
+  border-left: 3px solid var(--lab-accent);
+}
+
+.device-port-field {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  font-size: 13px;
+}
+
+.device-port-field input {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-control);
+  color: var(--lab-text);
+  font: inherit;
+}
+
+.hardware-table-scroll {
+  overflow-x: auto;
+  margin: 16px 0;
+}
+
+.hardware-joints {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.hardware-joints th,
+.hardware-joints td {
+  padding: 10px;
+  border-bottom: 1px solid var(--lab-border);
+}
+
+.hardware-session-note.device-description {
+  margin-top: 20px;
+}
+
 .devices-heading {
   margin-bottom: 24px;
 }
