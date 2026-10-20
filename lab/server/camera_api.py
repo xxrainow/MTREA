@@ -41,7 +41,6 @@ def camera_start(request: Request) -> dict:
                 status_code=409,
                 detail="Camera preview is unavailable during collection",
             )
-    with request.app.state.collection_gate:
         if fake_collection_enabled():
             raise HTTPException(
                 status_code=409,

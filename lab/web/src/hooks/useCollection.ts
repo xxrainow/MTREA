@@ -21,6 +21,7 @@ export function useCollection() {
   const [pollError, setPollError] = useState('');
   const [actionError, setActionError] = useState('');
   const [pending, setPending] = useState<Action | null>(null);
+  const [receivedAt, setReceivedAt] = useState(() => performance.now());
 
   const busy = useRef(false);
   const version = useRef(0);
@@ -41,6 +42,7 @@ export function useCollection() {
           requestedVersion === version.current
         ) {
           setStatus(next);
+          setReceivedAt(performance.now());
           setPollError('');
         }
       } catch (error) {
@@ -80,6 +82,8 @@ export function useCollection() {
     try {
       const next = await request();
       setStatus(next);
+      setReceivedAt(performance.now());
+      setPollError('');
       return true;
     } catch (error) {
       setActionError(message(error));
@@ -100,6 +104,7 @@ export function useCollection() {
 
   return {
     status,
+    receivedAt,
     active,
     pending,
     pollError,

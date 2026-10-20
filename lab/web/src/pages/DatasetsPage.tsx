@@ -1,400 +1,142 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { loadDataset, loadDatasets } from '../api/datasets';
+import type { DatasetDetail, DatasetSummary } from '../api/datasets';
+import DatasetEpisodeVideos from '../components/DatasetEpisodeVideos';
 import './DatasetsPage.css';
 
-type DatasetPreview = {
-  id: string;
-  name: string;
-  task: string;
-  role: string;
-  episodes: number;
-};
-
-type CameraView = 'wrist' | 'scene' | 'all';
-
-const exampleDatasets: DatasetPreview[] = [
-  {
-    id: 'demo',
-    name: 'pick_place_demo',
-    task: 'pick_place',
-    role: 'T_sub',
-    episodes: 10,
-  },
-  {
-    id: 'test',
-    name: 'pick_place_cli_test',
-    task: 'pick_place',
-    role: 'T_sub',
-    episodes: 1,
-  },
-];
-
 function DatasetsPage() {
-  const [selectedDataset, setSelectedDataset] =
-    useState<DatasetPreview | null>(null);
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [selected, setSelected] = useState<DatasetSummary | null>(null);
+  const [detail, setDetail] = useState<DatasetDetail | null>(null);
   const [episodeIndex, setEpisodeIndex] = useState(0);
-  const [cameraView, setCameraView] = useState<CameraView>('scene');
+  const [revision, setRevision] = useState(0);
+  const [loadedRevision, setLoadedRevision] = useState(-1);
+  const [error, setError] = useState('');
 
-  function selectDataset(dataset: DatasetPreview) {
-    setSelectedDataset(dataset);
+  useEffect(() => {
+    const controller = new AbortController();
+    loadDatasets(controller.signal).then((next) => {
+      if (!controller.signal.aborted) {
+        setDatasets(next);
+        setError('');
+        setLoadedRevision(revision);
+      }
+    }).catch((reason: unknown) => {
+      if (!controller.signal.aborted) {
+        setError(reason instanceof Error ? reason.message : 'Cannot load datasets.');
+        setLoadedRevision(revision);
+      }
+    });
+    return () => controller.abort();
+  }, [revision]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const controller = new AbortController();
+    loadDataset(selected, controller.signal).then((next) => {
+      if (!controller.signal.aborted) {
+        setDetail(next);
+        setError('');
+      }
+    }).catch((reason: unknown) => {
+      if (!controller.signal.aborted) {
+        setError(reason instanceof Error ? reason.message : 'Cannot load dataset details.');
+      }
+    });
+    return () => controller.abort();
+  }, [selected]);
+
+  function selectDataset(dataset: DatasetSummary) {
+    setDetail(null);
+    setError('');
     setEpisodeIndex(0);
-    setCameraView('scene');
+    setSelected(dataset);
   }
 
-  if (selectedDataset === null) {
+  function backToList() {
+    setSelected(null);
+    setDetail(null);
+    setError('');
+    setRevision((value) => value + 1);
+  }
+
+  const loading = loadedRevision !== revision;
+
+  if (selected === null) {
     return (
       <main className="datasets-page">
         <div className="datasets-heading">
-          <div>
-            <h1>Datasets</h1>
-            <p>
-              Explore collected demonstrations and check dataset status.
-            </p>
-          </div>
-
-          <span className="datasets-status">Example data</span>
+          <div><h1>Datasets</h1><p>Browse locally collected demonstrations and metadata.</p></div>
+          <button type="button" className="datasets-button" disabled={loading} onClick={() => setRevision((value) => value + 1)}>{loading ? 'Loading…' : 'Refresh'}</button>
         </div>
-
-        <section className="datasets-panel">
-          <div className="datasets-panel-header">
-            <h2>Dataset list</h2>
-            <button
-              type="button"
-              className="datasets-button"
-              disabled
-            >
-              Refresh
-            </button>
-          </div>
-
+        {error && <p className="datasets-error" role="alert">{error}</p>}
+        <section className="datasets-panel" aria-label="Dataset list" aria-busy={loading}>
+          <div className="datasets-panel-header"><h2>Collected datasets</h2><span className="datasets-status">{datasets.length} {datasets.length === 1 ? 'dataset' : 'datasets'}</span></div>
           <div className="datasets-table-wrapper">
             <table className="datasets-table">
-              <thead>
-                <tr>
-                  <th scope="col">Dataset</th>
-                  <th scope="col">Task</th>
-                  <th scope="col">Role</th>
-                  <th scope="col">Episodes</th>
-                  <th scope="col">Validation</th>
-                </tr>
-              </thead>
-
+              <thead><tr><th scope="col">Dataset</th><th scope="col">Mode</th><th scope="col">Episodes</th><th scope="col">Frames</th><th scope="col">Metadata</th></tr></thead>
               <tbody>
-                {exampleDatasets.map((dataset) => (
+                {datasets.map((dataset) => (
                   <tr key={dataset.id}>
-                    <td>
-                      <button
-                        type="button"
-                        className="datasets-name-button"
-                        onClick={() => selectDataset(dataset)}
-                      >
-                        {dataset.name}
-                      </button>
-                    </td>
-                    <td>{dataset.task}</td>
-                    <td>{dataset.role}</td>
-                    <td>{dataset.episodes}</td>
-                    <td>Not checked</td>
+                    <td><button type="button" className="datasets-name-button" onClick={() => selectDataset(dataset)} aria-label={`Open ${dataset.name} (${dataset.backend})`}>{dataset.name}</button></td>
+                    <td><span className={`datasets-mode is-${dataset.backend}`}>{dataset.backend.toUpperCase()}</span></td>
+                    <td>{dataset.episodes ?? '—'}</td><td>{dataset.total_frames ?? '—'}</td>
+                    <td>{dataset.issues.length ? 'Needs attention' : 'Available'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {!loading && !error && datasets.length === 0 && <p className="datasets-empty">No collected datasets yet. Finish a recording in Collect, then return here.</p>}
         </section>
-
-        <p className="datasets-empty">
-          Select a dataset to browse its episodes.
-        </p>
+        <p className="datasets-note datasets-catalog-note">Fake datasets contain metadata only. Metadata availability does not establish data quality or training compatibility.</p>
       </main>
     );
   }
 
-  const visibleCameras =
-    cameraView === 'all' ? ['wrist', 'scene'] : [cameraView];
+  const dataset = detail?.dataset ?? selected;
+  const episode = detail?.episodes[episodeIndex];
 
   return (
     <main className="datasets-page">
-      <button
-        type="button"
-        className="datasets-back-button"
-        onClick={() => setSelectedDataset(null)}
-      >
-        ← Dataset list
-      </button>
-
+      <button type="button" className="datasets-back-button" onClick={backToList}>← Dataset list</button>
       <div className="datasets-heading">
-        <div className="datasets-title">
-          <h1>{selectedDataset.name}</h1>
-          <p>Recorded demonstrations and episode browser</p>
-        </div>
-
-        <div className="datasets-heading-actions">
-          <label className="datasets-field datasets-selector">
-            Dataset
-            <select
-              value={selectedDataset.id}
-              onChange={(event) => {
-                const dataset = exampleDatasets.find(
-                  (item) => item.id === event.target.value,
-                );
-
-                if (dataset) {
-                  selectDataset(dataset);
-                }
-              }}
-            >
-              {exampleDatasets.map((dataset) => (
-                <option key={dataset.id} value={dataset.id}>
-                  {dataset.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button
-            type="button"
-            className="datasets-button"
-            disabled
-          >
-            Upload to Hub
-          </button>
-        </div>
+        <div><h1>{dataset.name}</h1><p>Saved recording metadata and episode instructions</p></div>
+        <span className={`datasets-mode is-${dataset.backend}`}>{dataset.backend.toUpperCase()}</span>
       </div>
-
+      {error && <p className="datasets-error" role="alert">{error}</p>}
+      {dataset.issues.map((issue) => <p className="datasets-error" role="alert" key={issue}>{issue}</p>)}
       <dl className="datasets-summary">
-        <div>
-          <dt>Episodes</dt>
-          <dd>{selectedDataset.episodes}</dd>
-        </div>
-        <div>
-          <dt>Total frames</dt>
-          <dd>—</dd>
-        </div>
-        <div>
-          <dt>FPS</dt>
-          <dd>—</dd>
-        </div>
-        <div>
-          <dt>Robot</dt>
-          <dd>SO-101 · example</dd>
-        </div>
-        <div>
-          <dt>Cameras</dt>
-          <dd>wrist, scene · example</dd>
-        </div>
-        <div className="datasets-summary-validation">
-          <dt>Validation</dt>
-          <dd>Not checked</dd>
-        </div>
+        <div><dt>Episodes</dt><dd>{dataset.episodes ?? '—'}</dd></div>
+        <div><dt>Total frames</dt><dd>{dataset.total_frames ?? '—'}</dd></div>
+        <div><dt>FPS</dt><dd>{dataset.fps ?? '—'}</dd></div>
+        <div><dt>Robot</dt><dd>{dataset.robot_type ?? 'Not recorded'}</dd></div>
+        <div><dt>Cameras</dt><dd>{dataset.cameras.join(', ') || 'Not recorded'}</dd></div>
       </dl>
-
-      <div className="datasets-browser">
-        <section
-          className="datasets-panel datasets-episodes"
-          aria-label="Episode list"
-        >
-          <div className="datasets-panel-header">
-            <h2>Episodes</h2>
-            <span className="datasets-status">
-              {selectedDataset.episodes}
-            </span>
-          </div>
-
+      {!detail && !error && <p role="status">Loading episode metadata…</p>}
+      {detail && <div className="datasets-browser">
+        <section className="datasets-panel datasets-episodes" aria-label="Episode list">
+          <div className="datasets-panel-header"><h2>Episodes</h2><span className="datasets-status">{detail.episodes.length}</span></div>
           <ul className="datasets-episode-list">
-            {Array.from(
-              { length: selectedDataset.episodes },
-              (_, index) => (
-                <li key={index}>
-                  <button
-                    type="button"
-                    className={`datasets-episode-button ${
-                      episodeIndex === index ? 'is-active' : ''
-                    }`}
-                    aria-pressed={episodeIndex === index}
-                    onClick={() => setEpisodeIndex(index)}
-                  >
-                    <span className="datasets-episode-index">
-                      {index}
-                    </span>
-
-                    <span className="datasets-episode-name">
-                      Episode {index}
-                    </span>
-
-                    <span className="datasets-episode-duration">
-                      —
-                    </span>
-                  </button>
-                </li>
-              ),
-            )}
+            {detail.episodes.map((item, index) => <li key={item.index}>
+              <button type="button" className={`datasets-episode-button ${episodeIndex === index ? 'is-active' : ''}`} aria-pressed={episodeIndex === index} onClick={() => setEpisodeIndex(index)}>
+                <span className="datasets-episode-index">{item.index}</span><span className="datasets-episode-name">Episode {item.index}</span>
+              </button>
+            </li>)}
           </ul>
+          {detail.episodes.length === 0 && <p className="datasets-empty datasets-inset">No saved episode metadata.</p>}
         </section>
-
-        <section
-          className="datasets-panel datasets-viewer"
-          aria-label={`Episode ${episodeIndex} viewer`}
-        >
-          <div className="datasets-viewer-toolbar">
-            <div
-              className="datasets-camera-options"
-              role="group"
-              aria-label="Camera view"
-            >
-              {(
-                [
-                  ['wrist', 'wrist'],
-                  ['scene', 'scene'],
-                  ['all', 'All cameras'],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={`datasets-button ${
-                    cameraView === value ? 'is-active' : ''
-                  }`}
-                  aria-pressed={cameraView === value}
-                  onClick={() => setCameraView(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            <div
-              className="datasets-playback-options"
-              role="group"
-              aria-label="Playback controls"
-            >
-              <button
-                type="button"
-                className="datasets-button"
-                disabled
-              >
-                0.5x
-              </button>
-              <button
-                type="button"
-                className="datasets-button"
-                disabled
-              >
-                1x
-              </button>
-              <button
-                type="button"
-                className="datasets-button"
-                disabled
-              >
-                2x
-              </button>
-              <button
-                type="button"
-                className="datasets-button"
-                disabled
-              >
-                Fullscreen
-              </button>
-            </div>
-          </div>
-
-          <div
-            className={`datasets-camera-grid ${
-              cameraView === 'all' ? 'show-all' : ''
-            }`}
-          >
-            {visibleCameras.map((camera) => (
-              <div
-                key={`${selectedDataset.id}-${episodeIndex}-${camera}`}
-                className="datasets-video-placeholder"
-                aria-label={`${camera} camera, episode ${episodeIndex}`}
-              >
-                <span className="datasets-camera-label">
-                  {camera}
-                </span>
-
-                <div className="datasets-video-message">
-                  <strong>Episode {episodeIndex}</strong>
-                  <span>Recorded video integration pending</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="datasets-player-controls">
-            <button
-              type="button"
-              className="datasets-button"
-              disabled
-            >
-              Play
-            </button>
-
-            <button
-              type="button"
-              className="datasets-button"
-              aria-label="Previous frame"
-              disabled
-            >
-              Previous frame
-            </button>
-
-            <button
-              type="button"
-              className="datasets-button"
-              aria-label="Next frame"
-              disabled
-            >
-              Next frame
-            </button>
-
-            <label className="datasets-timeline">
-              <span className="datasets-sr-only">
-                Playback position
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value="0"
-                disabled
-              />
-            </label>
-
-            <span className="datasets-player-time">— / —</span>
-          </div>
-
-          <section className="datasets-joint-panel">
-            <div className="datasets-panel-header">
-              <h3>Joint positions</h3>
-              <span className="datasets-description">Frame —</span>
-            </div>
-
-            <div className="datasets-chart-placeholder">
-              Joint data visualization integration pending
-            </div>
-          </section>
-
+        <section className="datasets-panel datasets-viewer" aria-label="Dataset details">
+          <div className="datasets-panel-header"><h2>{episode ? `Episode ${episode.index}` : 'Dataset details'}</h2></div>
+          {episode && <DatasetEpisodeVideos key={`${dataset.id}/${episode.index}`} dataset={dataset} index={episode.index} />}
           <dl className="datasets-details">
-            <div>
-              <dt>Task</dt>
-              <dd>{selectedDataset.task}</dd>
-            </div>
-            <div>
-              <dt>Role</dt>
-              <dd>{selectedDataset.role}</dd>
-            </div>
-            <div>
-              <dt>Storage location</dt>
-              <dd>Integration pending</dd>
-            </div>
+            <div><dt>Instruction</dt><dd>{episode?.tasks.join(' · ') || 'Not recorded'}</dd></div>
+            <div><dt>Dataset instructions</dt><dd>{detail.tasks.join(' · ') || 'Not recorded'}</dd></div>
+            <div><dt>Storage location</dt><dd>{dataset.location}</dd></div>
           </dl>
-
-          <p className="datasets-note">
-            Example data only. Video playback, joint data, file access,
-            and uploads are not yet integrated.
-          </p>
+          <p className="datasets-note">Episode numbers follow the saved dataset indices. Research roles are not inferred from web recordings.</p>
         </section>
-      </div>
+      </div>}
     </main>
   );
 }

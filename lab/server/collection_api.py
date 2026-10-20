@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 
 from lab.core.collection import CollectionService
 from lab.core.models import CollectionStatus
@@ -24,6 +25,18 @@ router = APIRouter(
 def collection_status(request: Request) -> CollectionStatus:
     service: CollectionService = request.app.state.collection
     return service.status()
+
+
+@router.get("/frames/{recording_id}/{name}")
+def recording_frame(recording_id: str, name: str, request: Request):
+    service: CollectionService = request.app.state.collection
+    try:
+        jpeg = service.read_frame(recording_id, name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 @router.post(
     "/validate",

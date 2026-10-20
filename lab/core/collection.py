@@ -2,6 +2,8 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Lock, Thread
 from copy import deepcopy
+from time import monotonic
+from robot.config import CAMERAS
 
 from lab.core import paths
 from lab.core.hardware import SessionStateError
@@ -37,10 +39,44 @@ class CollectionService:
         self._worker: Thread | None = None
         self._result: RecordingResult | None = None
         self._fake_mode = fake_collection_enabled()
+        self._recorded_before = 0
+        self._started_clock: float | None = None
+        self._status = replace(
+            self._status, backend="fake" if self._fake_mode else "real"
+        )
 
     def status(self) -> CollectionStatus:
         with self._lock:
-            return self._status
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self) -> CollectionStatus:
+        status = self._status
+        if self._started_clock is not None:
+            status = replace(
+                status, session_elapsed_s=monotonic() - self._started_clock
+            )
+        if self._recording is not None and hasattr(self._recording, "progress"):
+            progress = self._recording.progress()
+            if "current_episode" in progress:
+                progress["current_episode"] = min(
+                    status.total_episodes,
+                    self._recorded_before + progress["current_episode"],
+                )
+            if "saved_episodes" in progress:
+                progress["saved_episodes"] += self._recorded_before
+            status = replace(status, **progress)
+        return status
+
+    def read_frame(self, recording_id: str, name: str) -> bytes:
+        with self._lock:
+            recording = self._recording
+            if (
+                self._fake_mode or recording is None
+                or getattr(recording, "recording_id", None) != recording_id
+                or self._status.phase not in (CollectionPhase.STARTING, CollectionPhase.RECORDING)
+            ):
+                raise FileNotFoundError("Recording preview is inactive")
+        return recording.frame(name)
 
     def result(self) -> RecordingResult | None:
         with self._lock:
@@ -122,12 +158,21 @@ class CollectionService:
                                     "plan_sha256": plan_sha,
                                     "argv": command,
                                     "layouts": layouts[state.recorded_episodes:],
+                                    "recorder_adapter": "fake" if self._fake_mode else "web-hooks-v1",
                                     }
 
                 self._result = None
+                self._recorded_before = state.recorded_episodes
+                self._started_clock = monotonic()
                 self._status = CollectionStatus(
                     phase=CollectionPhase.STARTING,
                     session_index=session_index,
+                    backend="fake" if self._fake_mode else "real",
+                    dataset=repo_id,
+                    instruction=instruction,
+                    total_episodes=planned_episodes,
+                    saved_episodes=state.recorded_episodes,
+                    camera_names=tuple(camera.name for camera in CAMERAS),
                 )
 
                 self._worker = Thread(
@@ -147,7 +192,9 @@ class CollectionService:
 
             except Exception as exc:
                 self._hardware_lock.release()
-                self._status = CollectionStatus(
+                self._started_clock = None
+                self._status = replace(
+                    self._status,
                     phase=CollectionPhase.FAILED,
                     session_index=session_index,
                     error=str(exc),
@@ -196,16 +243,18 @@ class CollectionService:
                 if self._fake_mode:
                     self._recording = FakeRecordingProcess(command)
                 else:
-                    self._recording = RecordingProcess(command)                
+                    self._recording = RecordingProcess(command, telemetry=True)
                 recording = self._recording
                 self._status = replace(
                     self._status,
                     phase=CollectionPhase.RECORDING,
+                    recording_id=getattr(recording, "recording_id", None),
                 )
 
             recording.wait()
 
             with self._lock:
+                self._status = self._snapshot_locked()
                 self._status = replace(
                     self._status,
                     phase=CollectionPhase.VERIFYING,
@@ -221,6 +270,13 @@ class CollectionService:
 
             with self._lock:
                 self._result = result
+                if result.episodes_after is not None:
+                    self._status = replace(
+                        self._status,
+                        saved_episodes=self._recorded_before + max(
+                            0, result.episodes_after - episodes_before
+                        ),
+                    )
                 interrupted = self._status.stop_requested
 
             added = (
@@ -257,7 +313,7 @@ class CollectionService:
             )
 
             if result.problems:
-                error = "; ".join(result.problems)
+                error = "; ".join((*result.problems, *([self._status.error] if self._status.error else [])))
 
         except Exception as exc:
             error = str(exc)
@@ -272,6 +328,8 @@ class CollectionService:
                 self._hardware_lock.release()
             finally:
                 with self._lock:
+                    self._status = self._snapshot_locked()
+                    self._started_clock = None
                     self._recording = None
                     self._status = replace(
                         self._status,
@@ -282,6 +340,8 @@ class CollectionService:
                         ),
                         error=error,
                     )
+                if recording is not None and hasattr(recording, "close"):
+                    recording.close()
                     
     def is_active(self) -> bool:
         with self._lock:

@@ -15,6 +15,7 @@ from lab.core.hardware.cameras import CameraService
 from lab.server import camera_api
 from lab.core.collection import CollectionService
 from lab.server import collection_api
+from lab.server import datasets_api
 
 
 def create_app(data_base: Path | None = None) -> FastAPI:
@@ -76,6 +77,7 @@ def create_app(data_base: Path | None = None) -> FastAPI:
     application.include_router(hardware_api.router)
     application.include_router(camera_api.router)
     application.include_router(collection_api.router)
+    application.include_router(datasets_api.router)
 
     return application
 

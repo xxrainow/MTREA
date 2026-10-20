@@ -34,6 +34,19 @@ export type CollectionStatus = {
   session_index: number | null;
   error: string | null;
   stop_requested: boolean;
+  backend: 'real' | 'fake';
+  dataset: string | null;
+  instruction: string | null;
+  current_episode: number | null;
+  total_episodes: number;
+  saved_episodes: number;
+  episode_phase: string | null;
+  phase_elapsed_s: number;
+  phase_duration_s: number | null;
+  session_elapsed_s: number;
+  camera_names: string[];
+  recording_id: string | null;
+  preview_error: string | null;
 };
 
 export function validateCollectionInput(

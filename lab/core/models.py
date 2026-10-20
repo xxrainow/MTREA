@@ -212,3 +212,16 @@ class CollectionStatus:
     session_index: int | None = None
     error: str | None = None
     stop_requested: bool = False
+    backend: str = "real"
+    dataset: str | None = None
+    instruction: str | None = None
+    current_episode: int | None = None
+    total_episodes: int = 0
+    saved_episodes: int = 0
+    episode_phase: str | None = None
+    phase_elapsed_s: float = 0.0
+    phase_duration_s: float | None = None
+    session_elapsed_s: float = 0.0
+    camera_names: tuple[str, ...] = ()
+    recording_id: str | None = None
+    preview_error: str | None = None

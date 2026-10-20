@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import CameraPreviewPanel from '../components/CameraPreviewPanel';
+import RecordingView from '../components/RecordingView';
 import { useCameras } from '../hooks/useCameras';
 import { useCollection } from '../hooks/useCollection';
 
@@ -21,6 +22,7 @@ function CollectPage({ onBusyChange }: Props) {
   const [seed, setSeed] = useState('');
 
   const [formError, setFormError] = useState('');
+  const [showRecording, setShowRecording] = useState(false);
 
   const collection = useCollection();
   const cameras = useCameras();
@@ -113,7 +115,7 @@ function CollectPage({ onBusyChange }: Props) {
       return;
     }
 
-    await collection.start({
+    const accepted = await collection.start({
       dataset: datasetName,
       seed: parsedSeed,
       session_index: 1,
@@ -126,6 +128,22 @@ function CollectPage({ onBusyChange }: Props) {
         },
       ],
     });
+    if (accepted) setShowRecording(true);
+  }
+
+  if (showRecording || busy) {
+    return (
+      <RecordingView
+        status={collection.status}
+        receivedAt={collection.receivedAt}
+        active={collection.active}
+        pending={collection.pending}
+        unavailable={collection.unavailable}
+        error={collection.actionError || collection.pollError}
+        onStop={() => void collection.stop()}
+        onBack={() => setShowRecording(false)}
+      />
+    );
   }
 
   return (

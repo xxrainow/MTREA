@@ -15,7 +15,7 @@ function App() {
   const [collectBusy, setCollectBusy] = useState(false);
   function navigate(page: PageName) {
     if (activePage === 'Collect' && page !== 'Collect' && collectBusy) {
-      window.alert('수집 처리 중입니다. 중단 후 처리가 끝나면 이동하세요.');
+      window.alert('Recording is active. Stop recording and wait for saving to finish before leaving.');
       return;
     }
 

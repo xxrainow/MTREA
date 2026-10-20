@@ -12,7 +12,7 @@ from lab.core.models import CollectionPhase
 class FakeRecording:
     commands = []
 
-    def __init__(self, command):
+    def __init__(self, command, **options):
         self.args = dict(
             item[2:].split("=", 1)
             for item in command[1:]
@@ -116,7 +116,7 @@ def test_records_two_sessions_and_rejects_duplicate(
         )
         service._worker.join(timeout=3)
         assert not service._worker.is_alive()
-        assert service.status().phase == CollectionPhase.FINISHED, status.error
+        assert service.status().phase == CollectionPhase.FINISHED, service.status().error
 
     start_session(1)
     start_session(2)

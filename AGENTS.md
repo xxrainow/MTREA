@@ -126,6 +126,9 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.
 - Devices and Collect share the backend camera preview service. Page changes do not stop preview. A camera frame-read failure stops all preview cameras and exposes an error in status; reconnecting requires an explicit start.
+- Collect opens a dedicated recording workspace. Both modes have a 3-second preparation phase. Fake illustrations are explicitly simulated. Real web collection runs `lab.core.recording_worker` in the server's Python environment, wrapping installed LeRobot 0.6.0/0.6.1 recording hooks to report phase timing and publish existing observation frames. It retains LeRobot dataset writing/finalization. Temporary latest-frame IPC is bounded, JPEG encoding runs outside the control loop, stale frames are rejected, and files are removed after exit. Recording owns cameras exclusively; standalone preview is stopped before collection starts. CLI collection keeps its ordinary `lerobot-record` path. Real hardware end-to-end validation remains required.
+- Datasets reads local recording metadata from `data/raw/` and `data/fake/collection/raw/` through the read-only `/api/datasets` endpoints. Real and Fake datasets have separate identities, even with matching names. Metadata availability is not validation or research-role approval; Fake datasets contain no recorded video. Dataset browsing does not open hardware.
+- Dataset playback resolves v2 episode MP4s or v3 shared MP4s and timestamp bounds from saved metadata. Video responses support byte ranges; only paths inside the selected dataset are served. Each camera plays independently, with an episode-relative timeline. Original recordings are never rewritten for playback.
 
 
 ## Ownership

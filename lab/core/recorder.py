@@ -5,6 +5,9 @@ import yaml
 import os
 import signal
 import subprocess
+import sys
+from tempfile import TemporaryDirectory
+from uuid import uuid4
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -132,21 +135,41 @@ class RecordingResult:
 
 
 class RecordingProcess:
-    def __init__(self, command: list[str]) -> None:
+    def __init__(self, command: list[str], *, telemetry: bool = False) -> None:
         self.started_at = datetime.now().astimezone().isoformat(
             timespec="seconds"
         )
 
-        if os.name == "nt":
-            self._process = subprocess.Popen(
-                command,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-            )
-        else:
-            self._process = subprocess.Popen(
-                command,
-                start_new_session=True,
-            )
+        self.recording_id = uuid4().hex if telemetry else None
+        self._telemetry_dir = TemporaryDirectory(prefix="mtrea-recording-") if telemetry else None
+        self._telemetry = None
+        options = {}
+        if telemetry:
+            from lab.core.recording_telemetry import TelemetryReader
+            self._telemetry = TelemetryReader(Path(self._telemetry_dir.name))
+            command = [sys.executable, "-m", "lab.core.recording_worker", self._telemetry_dir.name, *command[1:]]
+            options = {"cwd": Path(__file__).resolve().parents[2], "stdin": subprocess.DEVNULL}
+        try:
+            if os.name == "nt":
+                self._process = subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP, **options)
+            else:
+                self._process = subprocess.Popen(command, start_new_session=True, **options)
+        except BaseException:
+            if self._telemetry_dir is not None:
+                self._telemetry_dir.cleanup()
+            raise
+
+    def progress(self) -> dict:
+        return self._telemetry.progress() if self._telemetry else {}
+
+    def frame(self, name: str) -> bytes:
+        if self._telemetry is None:
+            raise FileNotFoundError("Recording preview is unavailable")
+        return self._telemetry.frame(name)
+
+    def close(self):
+        if self._telemetry_dir is not None and self._process.poll() is not None:
+            self._telemetry_dir.cleanup()
 
     def wait(self) -> int:
         return self._process.wait()
