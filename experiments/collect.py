@@ -44,90 +44,25 @@ from datetime import datetime
 from importlib import metadata
 from pathlib import Path
 
-import yaml
-
 # Runnable from anywhere without `pip install -e .`: put the repo root on the path.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
-from lab.core.hardware import HardwareBusy  # noqa: E402
+from lab.core.hardware import HardwareBusy, HardwareError  # noqa: E402
 from lab.core.hardware.lock import HardwareLock  # noqa: E402
 from research.collect.plan import Plan, PlanError, Session, load_plan, sessions  # noqa: E402
-from robot.config import CAMERAS, FPS, ROBOT_TYPE, TELEOP_TYPE, data_root  # noqa: E402
+from robot.config import data_root  # noqa: E402
+from lab.core.recorder import ( RecordingProcess, build_hardware_args, build_record_command, wait_and_verify )  # noqa: E402
+from lab.core.dataset_metadata import (  # noqa: E402
+    read_episode_count,
+)
+from lab.core.collection_ledger import (  # noqa: E402
+    append_record,
+    check_state,
+    progress,
+    read_ledger,
+)
 
-CONFIGS = REPO_ROOT / "robot" / "configs"
 LEROBOT_CHECKED = "0.6.1"
-
-
-# --- dataset metadata (read-only; v2.x and v3.x layouts) ---
-
-def read_episode_count(root: Path) -> int | None:
-    """total_episodes from meta/info.json, or None when there is no dataset."""
-    info = root / "meta" / "info.json"
-    if not info.exists():
-        return None
-    return int(json.loads(info.read_text(encoding="utf-8"))["total_episodes"])
-
-
-def _jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-def read_tasks(root: Path) -> set[str]:
-    v3 = root / "meta" / "tasks.parquet"
-    if v3.exists():
-        import pandas as pd
-        df = pd.read_parquet(v3)
-        tasks = set(map(str, df.index)) if df.index.name == "task" else set()
-        if "task" in df.columns:
-            tasks |= set(map(str, df["task"]))
-        return tasks
-    v2 = root / "meta" / "tasks.jsonl"
-    if v2.exists():
-        return {str(row["task"]) for row in _jsonl(v2)}
-    raise FileNotFoundError(f"no meta/tasks.parquet or meta/tasks.jsonl under {root}")
-
-
-def read_episode_tasks(root: Path) -> dict[int, list[str]]:
-    files = sorted((root / "meta" / "episodes").rglob("*.parquet"))
-    if files:
-        import pandas as pd
-        result = {}
-        for path in files:
-            df = pd.read_parquet(path)
-            for index, tasks in zip(df["episode_index"], df["tasks"]):
-                result[int(index)] = [str(t) for t in tasks]
-        return result
-    v2 = root / "meta" / "episodes.jsonl"
-    if v2.exists():
-        return {int(row["episode_index"]): [str(t) for t in row["tasks"]] for row in _jsonl(v2)}
-    raise FileNotFoundError(f"no meta/episodes/*.parquet or meta/episodes.jsonl under {root}")
-
-
-def verify(root: Path, before: int, requested: int, instruction: str,
-           exit_code: int) -> tuple[int | None, list[str]]:
-    """(episodes_after, problems) for one finished lerobot-record run."""
-    problems = []
-    if exit_code != 0:
-        problems.append(f"lerobot-record exited with code {exit_code}")
-    try:
-        after = read_episode_count(root)
-    except (OSError, ValueError, KeyError) as exc:
-        return None, problems + [f"cannot read meta/info.json: {exc}"]
-    if after is None:
-        return None, problems + [f"no dataset at {root} after recording"]
-    if after - before != requested:
-        problems.append(f"episodes went {before} -> {after} (+{after - before}), expected +{requested}")
-    try:
-        if instruction not in read_tasks(root):
-            problems.append(f"instruction not registered as a task: {instruction!r}")
-        per_episode = read_episode_tasks(root)
-        for index in range(before, after):
-            if per_episode.get(index) != [instruction]:
-                problems.append(f"episode {index} has tasks {per_episode.get(index)}, "
-                                f"expected [{instruction!r}]")
-    except (OSError, ValueError, KeyError, ImportError) as exc:
-        problems.append(f"cannot read task metadata: {exc}")
-    return after, problems
 
 
 # --- ledger ---
@@ -136,22 +71,6 @@ def ledger_path(plan: Plan) -> Path:
     # Beside the dataset root, not inside it: lerobot owns that directory.
     return data_root() / plan.raw_subpath.parent / f"{plan.dataset}.collection.jsonl"
 
-
-def read_ledger(path: Path) -> list[dict]:
-    return _jsonl(path) if path.exists() else []
-
-
-def progress(lines: list[dict], index: int) -> tuple[bool, int]:
-    """(done, episodes recorded so far) for one session, summed over its runs."""
-    done, recorded = False, 0
-    for line in lines:
-        if line.get("session") != index:
-            continue
-        done |= line.get("status") == "ok"
-        before, after = line.get("episodes_before"), line.get("episodes_after")
-        if isinstance(before, int) and isinstance(after, int) and after > before:
-            recorded += after - before
-    return done, recorded
 
 
 def pick_session(all_sessions: list[Session], lines: list[dict], arg: str) -> Session | None:
@@ -168,51 +87,26 @@ def pick_session(all_sessions: list[Session], lines: list[dict], arg: str) -> Se
 
 # --- command ---
 
-def _cfg(name: str) -> dict:
-    return yaml.safe_load((CONFIGS / name).read_text(encoding="utf-8"))
-
 
 def hardware_args() -> list[str]:
-    follower, leader, cams = _cfg("so101_follower.yaml"), _cfg("so101_leader.yaml"), _cfg("cameras.yaml")
-    # Names, resolution and fps are fixed in robot.config; only the device index is per machine.
-    cameras = {
-        cam.name: {"type": "opencv", "index_or_path": cams[cam.name]["index_or_path"],
-                   "width": cam.width, "height": cam.height, "fps": cam.fps}
-        for cam in CAMERAS
-    }
-    # use_degrees sets the joint units of every recorded state/action, so the
-    # yaml value is always passed rather than left to lerobot's default.
-    for name, arm in (("so101_follower.yaml", follower), ("so101_leader.yaml", leader)):
-        if not isinstance(arm.get("use_degrees"), bool):
-            raise SystemExit(f"robot/configs/{name}: use_degrees must be true or false")
-    return [
-        f"--robot.type={ROBOT_TYPE}",
-        f"--robot.port={follower['port']}",
-        f"--robot.id={follower['id']}",
-        f"--robot.use_degrees={str(follower['use_degrees']).lower()}",
-        f"--robot.cameras={json.dumps(cameras)}",
-        f"--teleop.type={TELEOP_TYPE}",
-        f"--teleop.port={leader['port']}",
-        f"--teleop.id={leader['id']}",
-        f"--teleop.use_degrees={str(leader['use_degrees']).lower()}",
-    ]
+    try:
+        return build_hardware_args()
+    except HardwareError as exc:
+        raise SystemExit(str(exc)) from None
 
 
-def build_argv(exe: str, hardware: list[str], plan: Plan, session: Session, root: Path,
-               num_episodes: int, resume: bool) -> list[str]:
-    return [
-        exe, *hardware,
-        f"--dataset.repo_id={plan.repo_id}",
-        f"--dataset.root={root}",
-        f"--dataset.single_task={session.instruction}",
-        f"--dataset.num_episodes={num_episodes}",
-        f"--dataset.fps={FPS}",
-        f"--dataset.episode_time_s={plan.episode_time_s}",
-        f"--dataset.reset_time_s={plan.reset_time_s}",
-        "--dataset.push_to_hub=false",
-        "--dataset.no_stamp=true",
-        f"--resume={'true' if resume else 'false'}",
-    ]
+def build_argv(exe: str, hardware: list[str], plan: Plan, session: Session, root: Path, num_episodes: int, resume: bool) -> list[str]:
+    return build_record_command(
+        executable=exe,
+        hardware_args=hardware,
+        repo_id=plan.repo_id,
+        dataset_root=root,
+        instruction=session.instruction,
+        num_episodes=num_episodes,
+        episode_time_s=plan.episode_time_s,
+        reset_time_s=plan.reset_time_s,
+        resume=resume,
+    )
 
 
 def show_argv(argv: list[str]) -> str:
@@ -267,23 +161,6 @@ def _rel(path: Path) -> str:
         return str(path)
 
 
-def check_state(root: Path, lines: list[dict], plan_sha: str) -> tuple[int | None, list[str]]:
-    """Current episode count, and reasons the dataset and ledger disagree."""
-    problems = []
-    if any(line.get("plan_sha256") not in (None, plan_sha) for line in lines):
-        problems.append("the plan file changed after sessions were recorded with it; "
-                        "a changed plan needs a new plan file and dataset name")
-    count = read_episode_count(root)
-    if count is None and root.exists():
-        problems.append(f"{root} exists but has no meta/info.json (left by a failed run?); "
-                        "lerobot-record can neither create nor resume it. Inspect it and "
-                        "remove it by hand if it holds nothing")
-    expected = lines[-1].get("episodes_after") if lines else 0
-    if (count or 0) != expected:
-        problems.append(f"dataset has {count or 0} episodes but the ledger accounts for {expected}; "
-                        "episodes were recorded or lost outside this tool")
-    return count, problems
-
 
 def _prompt(session: Session) -> str:
     """'record', 'quit' or 'interrupted', from the operator at the keyboard."""
@@ -330,19 +207,31 @@ def run_session(plan: Plan, plan_path: Path, plan_sha: str, session: Session, ro
         return answer, "operator stopped before recording; nothing written"
 
     interrupted = False
-    started = _now()
-    proc = subprocess.Popen(cmd)
+    recording = RecordingProcess(cmd)
+
     while True:
         try:
-            exit_code = proc.wait()
+            result = wait_and_verify(
+                recording,
+                dataset_root=root,
+                episodes_before=before,
+                requested_episodes=remaining,
+                instruction=session.instruction,
+            )
             break
         except KeyboardInterrupt:
-            # The child got the same Ctrl+C; let it finalize the dataset, then log what happened.
-            interrupted = True
+            if not interrupted:
+                interrupted = True
+                recording.request_stop()
             print("\nwaiting for lerobot-record to finalize the dataset...")
-    ended = _now()
 
-    after, problems = verify(root, before, remaining, session.instruction, exit_code)
+    started = result.started_at
+    ended = result.ended_at
+    exit_code = result.exit_code
+    after = result.episodes_after
+    problems = list(result.problems)
+
+    
     added = max(0, (after or before) - before)
     layouts = [
         {"episode_index": before + i, "target_position": layout.target_position,
@@ -376,9 +265,7 @@ def run_session(plan: Plan, plan_path: Path, plan_sha: str, session: Session, ro
         "interrupted": interrupted,
         "problems": problems,
     }
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    with ledger.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    append_record(ledger, record)
     lines.append(record)
 
     print(f"\nsession {session.index}: {status}, episodes {before} -> {after}; logged to {ledger}")

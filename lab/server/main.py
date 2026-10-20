@@ -13,6 +13,8 @@ from lab.core.store import JobStore
 from lab.server import hardware_api
 from lab.core.hardware.cameras import CameraService
 from lab.server import camera_api
+from lab.core.collection import CollectionService
+from lab.server import collection_api
 
 
 def create_app(data_base: Path | None = None) -> FastAPI:
@@ -31,16 +33,25 @@ def create_app(data_base: Path | None = None) -> FastAPI:
             repo_root=repo_root,
         )
         app.state.runner_lock = Lock()
+        
         app.state.hardware = HardwareService(data_base=resolved_data)
         app.state.cameras = CameraService()
+        app.state.collection = CollectionService(
+            data_base=resolved_data
+        )
+        app.state.collection_gate = Lock()
+        app.state.data_base = resolved_data
 
         try:
             yield
         finally:
             try:
-                app.state.cameras.stop()
+                app.state.collection.shutdown()
             finally:
-                app.state.hardware.shutdown()
+                try:
+                    app.state.cameras.stop()
+                finally:
+                    app.state.hardware.shutdown()
 
     application = FastAPI(
         title="MTREA Lab",
@@ -64,6 +75,7 @@ def create_app(data_base: Path | None = None) -> FastAPI:
     )
     application.include_router(hardware_api.router)
     application.include_router(camera_api.router)
+    application.include_router(collection_api.router)
 
     return application
 

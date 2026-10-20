@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from lab.core.hardware import HardwareError
 from lab.core.hardware.cameras import CameraService
+from lab.core.fake_recorder import fake_collection_enabled
 
 router = APIRouter(prefix="/api/cameras", tags=["cameras"])
 
@@ -34,7 +35,20 @@ def camera_status(request: Request) -> dict:
 
 @router.post("/start")
 def camera_start(request: Request) -> dict:
-    return _call(_service(request).start)
+    with request.app.state.collection_gate:
+        if request.app.state.collection.is_active():
+            raise HTTPException(
+                status_code=409,
+                detail="Camera preview is unavailable during collection",
+            )
+    with request.app.state.collection_gate:
+        if fake_collection_enabled():
+            raise HTTPException(
+                status_code=409,
+                detail="Camera preview is unavailable in fake mode",
+            )
+
+        return _call(_service(request).start)
 
 
 @router.post("/stop")

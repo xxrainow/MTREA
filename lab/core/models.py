@@ -192,3 +192,23 @@ class RolloutRecord:
         d = asdict(self)
         d["started_at"] = self.started_at.isoformat()
         return d
+
+
+
+# --- Data Collect Feature ---
+class CollectionPhase(str, Enum):
+    IDLE = "idle"
+    STARTING = "starting"
+    RECORDING = "recording"
+    STOPPING = "stopping"
+    VERIFYING = "verifying"
+    FINISHED = "finished"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class CollectionStatus:
+    phase: CollectionPhase = CollectionPhase.IDLE
+    session_index: int | None = None
+    error: str | None = None
+    stop_requested: bool = False
