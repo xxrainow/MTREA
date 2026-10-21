@@ -12,9 +12,18 @@ import RunPage from './pages/RunPage';
 
 function App() {
   const [activePage, setActivePage] = useState<PageName>('Overview');
+  const [collectBusy, setCollectBusy] = useState(false);
+  function navigate(page: PageName) {
+    if (activePage === 'Collect' && page !== 'Collect' && collectBusy) {
+      window.alert('Recording is active. Stop recording and wait for saving to finish before leaving.');
+      return;
+    }
+
+    setActivePage(page);
+  }
 
   return (
-    <AppLayout activePage={activePage} onPageChange={setActivePage}>
+    <AppLayout activePage={activePage} onPageChange={navigate}>
       {activePage === 'Overview' ? (
         <OverviewPage onNavigate={setActivePage} />
       ) : activePage === 'Devices' ? (
@@ -22,7 +31,7 @@ function App() {
       ) : activePage === 'Teleoperate' ? (
         <TeleoperatePage />
       ) : activePage === 'Collect' ? (
-        <CollectPage />
+        <CollectPage onBusyChange={setCollectBusy} />
       ) : activePage === 'Datasets' ? (
         <DatasetsPage />
       ) : activePage === 'Train' ? (

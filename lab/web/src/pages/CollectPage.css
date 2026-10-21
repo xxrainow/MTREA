@@ -24,7 +24,7 @@
 
 .collect-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 360px;
   align-items: start;
   gap: 20px;
 }
@@ -145,6 +145,7 @@
 .collect-field-pair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
   gap: 12px;
 }
 
@@ -224,4 +225,62 @@
 .collect-panel > .collect-actions + .collect-cameras,
 .collect-camera-error + .collect-cameras {
   margin-top: 16px;
+}
+
+.collect-validation {
+  display: grid;
+  gap: 12px;
+  margin: 4px 0 24px;
+}
+
+.collect-validation > .collect-button {
+  width: 100%;
+  min-height: 40px;
+}
+
+.collect-validation-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.collect-validation-result {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  background: var(--lab-control);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.collect-validation-result strong {
+  color: var(--lab-text);
+}
+
+.collect-validation-result span {
+  color: var(--lab-muted);
+}
+
+
+.collect-settings-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.collect-settings-fields:disabled {
+  opacity: 0.7;
+}
+
+.collect-session-guide {
+  margin: 0 0 16px;
+  color: var(--lab-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }

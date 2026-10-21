@@ -338,7 +338,7 @@
   display: grid;
   place-items: center;
   min-width: 0;
-  aspect-ratio: 16 / 9;
+  min-height: 180px;
   padding: 32px 16px;
   border: 1px dashed var(--lab-border);
   border-radius: 4px;
@@ -359,6 +359,13 @@
   display: grid;
   gap: 8px;
 }
+
+.datasets-video-card { margin: 0; min-width: 0; padding: 12px; border: 1px solid var(--lab-border); border-radius: 6px; background: var(--lab-background); }
+.datasets-video-card figcaption { margin-bottom: 10px; font-size: 13px; }
+.datasets-video-card video { display: block; width: 100%; aspect-ratio: 4 / 3; background: #000; object-fit: contain; border-radius: 4px; }
+.datasets-video-card .datasets-player-controls { margin-top: 12px; }
+.datasets-video-seek { flex: 1 1 80px; min-width: 0; accent-color: var(--lab-accent); }
+.datasets-video-card select { padding: 6px; border: 1px solid var(--lab-border); background: var(--lab-control); color: var(--lab-text); border-radius: 4px; }
 
 .datasets-player-controls {
   display: flex;
@@ -435,6 +442,13 @@
   color: var(--lab-muted);
   font-size: 12px;
 }
+
+.datasets-catalog-note { margin-top: 20px; line-height: 1.6; }
+.datasets-inset { padding: 0 16px; }
+.datasets-mode { display: inline-block; padding: 4px 8px; border: 1px solid var(--lab-border); border-radius: 4px; font-size: 11px; letter-spacing: .08em; }
+.datasets-mode.is-fake { color: #e5ad55; background: #e5ad5512; }
+.datasets-mode.is-real { color: #5fbd90; background: #5fbd9012; }
+.datasets-error { padding: 12px 16px; border: 1px solid #b55b5b; border-radius: 4px; color: #df7979; overflow-wrap: anywhere; }
 
 .datasets-sr-only {
   position: absolute;
