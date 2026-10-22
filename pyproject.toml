@@ -7,10 +7,10 @@ name = "mt-rea"
 version = "0.0.0"
 description = "MT-REA — does narrow fine-tuning of a pretrained VLA on a new embodiment preserve held-out capability?"
 readme = "README.md"
-requires-python = ">=3.10"
-# LeRobot is pinned to a release tag (not PyPI latest) and is not resolved from
-# PyPI here. See AGENTS.md "Tech stack". Exact versions / package manager
-# (uv vs pip) TODO.
+requires-python = ">=3.12"
+# LeRobot is pinned to v0.6.1 (which requires Python 3.12) and is not resolved
+# here: install lerobot[pi,async,training] on the GPU host and lerobot[feetech]
+# on the robot side. See AGENTS.md "Tech stack". Package manager (uv vs pip) TODO.
 dependencies = [
     "torch",
     "psutil",

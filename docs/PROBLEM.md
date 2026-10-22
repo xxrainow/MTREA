@@ -87,20 +87,15 @@ Fine-tuning a pretrained VLA onto a new embodiment conflates two distinct things
   competence retained from pretraining on T, which is what makes held-out tasks
   possible at all.
 
-**Hypothesis:** naive fine-tuning (H0) updates only the action expert's
-parameters to fit T_sub, leaving the frozen vision-language backbone unchanged,
-yet this still *entangles* (a) and (b) — because the action expert is the shared
-machinery both rely on, tuning it toward the single fine-tuned task drags the
-skill responsible for held-out tasks along with it, corrupting held-out
-performance. Because H0 already freezes the entire vision-language backbone,
-choosing which top-level module to freeze cannot make a method more selective
-than H0: unfreezing more modules (e.g. the vision encoder alongside the action
-expert) tunes *more* than H0, not less. Methods beyond H0 must therefore
-intervene on a different axis — for example restricting which updates are
-allowed *within* the action expert, regularizing toward the pretrained weights,
-or changing the fine-tuning data. The concrete choice is left open. Such a
-method should preserve held-out performance better than H0 at equal T_sub
-performance.
+**Hypothesis:** naive fine-tuning (H0) updates every parameter to fit T_sub:
+the vision-language model (VLM) that carries the task-general skill (b), and
+the action expert that both (a) and (b) act through. Gradients from a single
+task therefore reach both, so (a) and (b) *entangle*: adapting to SO-101 on
+`pick_place` also moves the weights responsible for held-out tasks, corrupting
+held-out performance. A method that separates the two should preserve held-out
+performance better than H0 at equal T_sub performance. Because H0 restricts
+nothing, choosing which modules adapt is a valid axis again (see "Methods
+under comparison").
 
 The project's job is to characterize this trade-off under realistic small-lab
 constraints, not to win a leaderboard.
@@ -110,29 +105,36 @@ constraints, not to win a leaderboard.
 H0, H1, H2, … denote fine-tuning methods being compared, all trained on the same
 T_sub demos and evaluated on the same held-out families.
 
-- **H0 — naive baseline.** Naive single-task fine-tuning of π0.5 on T_sub with
-  `train_expert_only=true`: the pretrained vision-language backbone is frozen and
-  only the action expert is trained. This is *not* a LoRA-based method — LoRA
-  support for π0.5 is unreliable/unimplemented in both the openpi and LeRobot
-  training paths and has been dropped from this project entirely. This is the
-  entangled case the hypothesis predicts will degrade held-out performance most,
-  and every other method is compared against H0.
-  - The standard, unconstrained approach would be full fine-tuning of *all*
-    parameters, but that needs ~80 GB of GPU memory, exceeding the 40 GB A100
-    available to this project.
-  - `train_expert_only=true` is LeRobot's documented memory-saving
-    configuration for π0.5. Published SO-101 π0.5 recipes use full fine-tuning
-    on 80 GB+ GPUs, which this project cannot run.
-  - Framing implication: because the vision-language backbone is left untouched,
-    any held-out degradation observed under H0 cannot be attributed to
-    catastrophic forgetting in the semantic/language pathway alone. It would
-    instead indicate that even action-expert-only adaptation is sufficient to
-    disrupt transfer — a stronger and more specific finding than naive
-    full-parameter fine-tuning would demonstrate.
+- **H0 — naive baseline.** Naive single-task full fine-tuning of π0.5
+  (`lerobot/pi05_base`) on T_sub: all parameters train, with LeRobot's defaults
+  `train_expert_only=false` and `freeze_vision_encoder=false`, at batch size 16.
+  This is the entangled case the hypothesis predicts will degrade held-out
+  performance most, and every other method is compared against H0.
+  - Full fine-tuning is the baseline because it is the default in both openpi
+    and LeRobot, and it is the standard baseline in the forgetting literature
+    (RETAIN, Garg et al.).
+  - It fits on the project's GPU, one A100 MIG 3g.40gb slice: bf16 with
+    gradient checkpointing peaks at about 37 GiB at batch 16 (docs/COMPUTE.md).
+  - The one deviation from the standard recipe is scale: batch 16 instead of
+    openpi's 32–256, and a smaller sample budget, both forced by a single MIG
+    slice (bs 32 runs out of memory, LeRobot has no gradient accumulation, and
+    throughput saturates around 4 samples/s).
+  - H0 is *not* LoRA-based. LoRA support for π0.5 is unreliable or unimplemented
+    in both the openpi and LeRobot training paths and has been dropped from this
+    project entirely.
 - **H1, H2, H3 — beyond H0.** Methods informed by the hypothesis above that
-  intervene on an axis other than which top-level module is frozen (H0 already
-  freezes the whole vision-language backbone) — e.g. restricting updates within
-  the action expert, regularizing toward the pretrained weights, or changing the
-  fine-tuning data. The concrete parameterization of each is specified when that
-  method is run; what they share is testing whether they retain held-out
-  capability that H0 loses.
+  limit how far fine-tuning on T_sub can move the weights held-out tasks rely
+  on. Candidate axes:
+  - restricting which modules adapt. The first comparison is **expert-only
+    fine-tuning** (`train_expert_only=true`, method `expert_only` in
+    `research/train.py`): the VLM is frozen and only the action expert and
+    projections train, following the knowledge-insulation argument that
+    keeping action-learning gradients out of the VLM preserves its pretrained
+    knowledge;
+  - restricting which updates are allowed within the action expert;
+  - regularizing toward the pretrained weights;
+  - changing the fine-tuning data.
+
+  Which methods become H1–H3 is still open. The concrete parameterization of
+  each is specified when that method is run; what they share is testing whether
+  they retain held-out capability that H0 loses.

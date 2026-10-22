@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 import research.train as train
-from research.train import METHODS, main, missing_quantile_stats, parse_metrics_line, resolve_step
+from research.train import (METHODS, build_parser, classify_failure, main, missing_quantile_stats,
+                            parse_metrics_line, resolve_step)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -178,7 +179,7 @@ def test_dry_run_prints_command_and_creates_nothing(tmp_path, capsys):
     assert rc == 0
     assert out.splitlines()[0] == "STATS ok"
     assert "COMMAND lerobot-train --policy.type=pi05" in out
-    assert "--policy.train_expert_only=true" in out
+    assert "--policy.train_expert_only=false" in out
     assert [p.name for p in tmp_path.iterdir()] == ["dataset"]  # only the fixture
 
 
@@ -203,12 +204,13 @@ def test_existing_nonempty_output_is_refused_and_untouched(tmp_path, capsys):
     assert not (tmp_path / "stub_argv.json").exists()  # never launched
 
 
-def test_h0_maps_to_expected_policy_flags(tmp_path, capsys):
-    assert main(base_args(tmp_path, write_stub(tmp_path))) == 0
+@pytest.mark.parametrize("method,expert_only", [("h0", "false"), ("expert_only", "true")])
+def test_methods_map_to_expected_policy_flags(tmp_path, capsys, method, expert_only):
+    assert main(base_args(tmp_path, write_stub(tmp_path), method=method)) == 0
     received = json.loads((tmp_path / "stub_argv.json").read_text(encoding="utf-8"))
-    for key, value in METHODS["h0"].items():
+    for key, value in METHODS[method].items():
         assert f"--{key}={value}" in received
-    assert "--policy.train_expert_only=true" in received
+    assert f"--policy.train_expert_only={expert_only}" in received
     assert "--policy.freeze_vision_encoder=false" in received
     assert "--policy.pretrained_path=lerobot/pi05_base" in received
     assert "--policy.dtype=bfloat16" in received
@@ -219,6 +221,30 @@ def test_h0_maps_to_expected_policy_flags(tmp_path, capsys):
     assert f"--output_dir={(tmp_path / 'run' / 'lerobot').as_posix()}" in received
 
 
+def test_defaults():
+    args = build_parser().parse_args(["--method=h0", "--dataset=x", "--output=y", "--seed=0"])
+    assert (args.batch_size, args.steps, args.save_freq) == (16, 10000, 1000)
+    assert args.lr == 2.5e-5 and args.warmup_steps == 1000
+
+
+def test_scheduler_decays_over_the_run(tmp_path, capsys):
+    assert main(base_args(tmp_path, write_stub(tmp_path), steps="40000", lr="1e-05")) == 0
+    received = json.loads((tmp_path / "stub_argv.json").read_text(encoding="utf-8"))
+    assert "--policy.optimizer_lr=1e-05" in received
+    assert "--policy.scheduler_warmup_steps=1000" in received
+    assert "--policy.scheduler_decay_steps=40000" in received
+    assert "--policy.scheduler_decay_lr=1e-06" in received
+    config = json.loads((tmp_path / "run" / "config.json").read_text(encoding="utf-8"))
+    assert config["scheduler"] == {"type": "cosine_decay_with_warmup", "peak_lr": 1e-05, "decay_lr": 1e-06,
+                                   "warmup_steps": 1000, "decay_steps": 40000}
+
+
+def test_warmup_not_below_steps_is_refused(tmp_path, capsys):
+    assert main(base_args(tmp_path, write_stub(tmp_path), steps="1000")) == 2
+    assert "--warmup-steps" in capsys.readouterr().err
+    assert not (tmp_path / "run").exists()
+
+
 def test_successful_run_writes_bookkeeping(tmp_path, capsys):
     rc = main(base_args(tmp_path, write_stub(tmp_path)))
     out = capsys.readouterr().out.splitlines()
@@ -227,7 +253,7 @@ def test_successful_run_writes_bookkeeping(tmp_path, capsys):
 
     config = json.loads((run / "config.json").read_text(encoding="utf-8"))
     assert config["args"]["seed"] == 0
-    assert config["args"]["lr"] == 5e-5 and config["args"]["batch_size"] == 1
+    assert config["args"]["lr"] == 2.5e-5 and config["args"]["batch_size"] == 16
     assert config["method_flags"] == METHODS["h0"]
     assert config["lerobot_argv"][-1] == "--wandb.enable=false"
     for key in ("git_commit", "git_dirty", "lerobot_version", "python_version", "hostname", "start_time"):
@@ -250,6 +276,7 @@ def test_successful_run_writes_bookkeeping(tmp_path, capsys):
 
     result = json.loads((run / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "done" and result["exit_code"] == 0
+    assert "failure" not in result
     assert result["last_step"] == 2000 and result["last_loss"] == 0.433
     assert "end_time" in result
     assert "step 1500: eval_loss" in (run / "train.log").read_text(encoding="utf-8")
@@ -262,7 +289,26 @@ def test_failing_run_records_failure(tmp_path, capsys):
     assert rc == 1
     assert out[-1] == "STATUS failed exit=1"
     assert result["status"] == "failed" and result["exit_code"] == 1
+    assert result["failure"] == "error"
     assert result["last_step"] == 500
+
+
+OOM_CUDA = "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB."
+OOM_MIG = ("RuntimeError: NVML_SUCCESS == r INTERNAL ASSERT FAILED at "
+           "\"/pytorch/c10/cuda/CUDACachingAllocator.cpp\":1131, please report a bug to PyTorch.")
+
+
+@pytest.mark.parametrize("message", [OOM_CUDA, OOM_MIG])
+def test_oom_is_classified(tmp_path, capsys, message):
+    lines = (LOG_500, "Traceback (most recent call last):", message)
+    assert main(base_args(tmp_path, write_stub(tmp_path, exit_code=1, lines=lines))) == 1
+    result = json.loads((tmp_path / "run" / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "failed" and result["failure"] == "oom"
+
+
+def test_classify_failure():
+    assert classify_failure([OOM_CUDA]) == classify_failure(["x", OOM_MIG]) == "oom"
+    assert classify_failure(["RuntimeError: stub failure", "NVML_SUCCESS"]) == "error"
 
 
 def test_failing_run_prints_log_tail_to_stderr(tmp_path, capsys):
@@ -294,7 +340,8 @@ def test_missing_binary_records_failure(tmp_path, capsys):
     rc = main(base_args(tmp_path, str(tmp_path / "no-such-lerobot-train")))
     assert rc == 127
     assert capsys.readouterr().out.splitlines()[-1] == "STATUS failed exit=127"
-    assert json.loads((tmp_path / "run" / "result.json").read_text(encoding="utf-8"))["status"] == "failed"
+    result = json.loads((tmp_path / "run" / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "failed" and result["failure"] == "error"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX signal delivery; lab's runner stops jobs with SIGTERM")
