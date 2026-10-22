@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# GPU memory smoke test for pi05 fine-tuning — which configs fit on the A100
-# (40GB), at what batch size, and how fast. Run by hand on the GPU host before
-# committing to H0. Nothing produced here is a result: the dataset only exercises
-# the pipeline and no checkpoint is written.
+# GPU memory smoke test for pi05 fine-tuning — which configs fit on the GPU
+# (an A100 MIG 3g.40gb slice; see docs/COMPUTE.md), at what batch size, and
+# how fast. Run by hand on the GPU host before committing to H0. Nothing
+# produced here is a result: the dataset only exercises the pipeline and no
+# checkpoint is written.
 #
 #     bash experiments/gpu_smoke_test.sh [--dataset=lerobot/svla_so101_pickplace] [--steps=20] [--out=data/runs/smoke]
 #
@@ -21,8 +22,12 @@
 # `lerobot-edit-dataset --operation.type=recompute_stats` (the fix documented in
 # docs/source/pi05.mdx) into a copy under --out. Normalization mode is not changed.
 #
+# OOM: "CUDA out of memory", or on MIG "NVML_SUCCESS == r INTERNAL ASSERT FAILED"
+# (NVML queries are not permitted there, so nvidia-smi memory reads are
+# "[InsufficientPermissions]"; torch_peak_gib, lerobot's mem_gb, is the number to use).
+#
 # Output: one `SMOKE key=value ...` line per run on stdout, rows appended to
-# --out/results.csv, a final table. Exit 0 iff expert_only at bs=1 passed.
+# --out/results.csv, a final table. Exit 0 iff full fine-tuning (H0) at bs=16 passed.
 
 set -uo pipefail   # not -e: an OOM must not abort the remaining runs
 
@@ -43,7 +48,7 @@ for arg in "$@"; do
     --dataset=*) DATASET="${arg#*=}" ;;
     --steps=*)   STEPS="${arg#*=}" ;;
     --out=*)     OUT="${arg#*=}" ;;
-    -h|--help)   sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg (expected --dataset=, --steps=, --out=)" >&2; exit 2 ;;
   esac
 done
@@ -72,8 +77,13 @@ GPU_INFO=$(nvidia-smi -i "$GPU" --query-gpu=name,memory.total,memory.used --form
   || die "nvidia-smi failed for GPU $GPU"
 IFS=',' read -r GPU_NAME GPU_TOTAL_MIB GPU_USED_MIB <<<"$GPU_INFO"
 GPU_NAME="$(echo "$GPU_NAME" | xargs)"; GPU_TOTAL_MIB=${GPU_TOTAL_MIB// /}; GPU_USED_MIB=${GPU_USED_MIB// /}
+is_int() { [[ "$1" =~ ^[0-9]+$ ]]; }
 echo "preflight: GPU $GPU = $GPU_NAME, total ${GPU_TOTAL_MIB} MiB, already used ${GPU_USED_MIB} MiB"
-[ "$GPU_USED_MIB" -gt 1024 ] && echo "preflight: WARNING another process holds ${GPU_USED_MIB} MiB; peaks below include it (see baseline_mib)"
+if ! is_int "$GPU_USED_MIB"; then
+  echo "preflight: note: memory not readable on this GPU, use torch_peak_gib"
+elif [ "$GPU_USED_MIB" -gt 1024 ]; then
+  echo "preflight: WARNING another process holds ${GPU_USED_MIB} MiB; peaks below include it (see baseline_mib)"
+fi
 
 LEROBOT_VERSION=$(python -c 'import lerobot; print(lerobot.__version__)' 2>&1) \
   || die "import lerobot failed: $LEROBOT_VERSION"
@@ -168,7 +178,7 @@ trap stop_sampler EXIT
 trap 'stop_sampler; echo "interrupted" >&2; exit 130' INT TERM
 
 LAST_STATUS=""
-EXPERT_BS1=""
+FULL_BS16=""
 
 # run_one NAME BS [extra lerobot-train flags...]
 run_one() {
@@ -178,6 +188,7 @@ run_one() {
 
   local baseline
   baseline=$(nvidia-smi -i "$GPU" --query-gpu=memory.used --format=csv,noheader,nounits | tr -d ' ')
+  is_int "$baseline" || baseline=NA
   nvidia-smi -i "$GPU" --query-gpu=memory.used --format=csv,noheader,nounits -lms 500 >"$mem" 2>/dev/null &
   SAMPLER_PID=$!
 
@@ -209,7 +220,7 @@ run_one() {
   kill "$SAMPLER_PID" 2>/dev/null; wait "$SAMPLER_PID" 2>/dev/null; SAMPLER_PID=""
 
   local status peak torch_peak sps src wall=$((t1 - t0))
-  if grep -q "CUDA out of memory" "$log"; then
+  if grep -qE "CUDA out of memory|NVML_SUCCESS == r INTERNAL ASSERT FAILED" "$log"; then
     status=OOM
   elif [ "$rc" -eq 0 ]; then
     status=OK
@@ -253,31 +264,35 @@ run_one() {
   LAST_STATUS=$status
 }
 
-# 1. H0's config: action expert only. Increase batch size until the first OOM.
+# 1. Action expert only (the expert_only method). Increase batch size until the first OOM.
 for bs in 1 2 4 8; do
   run_one expert_only "$bs" --policy.train_expert_only=true --policy.freeze_vision_encoder=false
-  [ "$bs" = 1 ] && EXPERT_BS1=$LAST_STATUS
   [ "$LAST_STATUS" = OOM ] && break
 done
 
 # 2. VLM language model + expert trained, vision tower frozen.
 run_one freeze_vision 1 --policy.train_expert_only=false --policy.freeze_vision_encoder=true
 
-# 3. Full fine-tuning.
-run_one full 1 --policy.train_expert_only=false --policy.freeze_vision_encoder=false
+# 3. Full fine-tuning (H0). Increase batch size until the first OOM.
+for bs in 1 8 16; do
+  run_one full "$bs" --policy.train_expert_only=false --policy.freeze_vision_encoder=false
+  [ "$bs" = 16 ] && FULL_BS16=$LAST_STATUS
+  [ "$LAST_STATUS" = OOM ] && break
+done
 
 # ---------------------------------------------------------------- summary
 
 echo
 echo "=== smoke results ($STAMP, $GPU_NAME, ${GPU_TOTAL_MIB} MiB, $STEPS steps) ==="
-{
-  echo "config bs status peak_mib torch_peak_gib s_per_step src"
-  awk -F, -v s="$STAMP" '$1 == s { print $5, $6, $7, $8, $10, $11, $12 }' "$RESULTS"
-} | column -t
+# awk, not column(1): column is missing on the GPU host.
+awk -F, -v s="$STAMP" '
+  BEGIN { fmt = "%-14s %4s %-6s %9s %15s %11s %5s\n"
+          printf fmt, "config", "bs", "status", "peak_mib", "torch_peak_gib", "s_per_step", "src" }
+  $1 == s { printf fmt, $5, $6, $7, $8, $10, $11, $12 }' "$RESULTS"
 echo "full rows: $RESULTS"
 
-if [ "$EXPERT_BS1" = OK ]; then
+if [ "$FULL_BS16" = OK ]; then
   exit 0
 fi
-echo "FAIL: expert_only at bs=1 did not pass ($EXPERT_BS1); H0 does not fit as configured" >&2
+echo "FAIL: full fine-tuning at bs=16 did not pass (${FULL_BS16:-not run}); H0 does not fit as configured" >&2
 exit 1

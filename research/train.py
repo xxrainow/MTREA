@@ -15,14 +15,16 @@ stdout carries only parseable lines for lab's runner:
     STATUS done|failed|stopped exit=<code>
 
 lerobot flag names are the ones verified against lerobot v0.6.1 in
-experiments/gpu_smoke_test.sh, plus policy.optimizer_lr, log_freq and the
-MetricsTracker log-line format read from the same v0.6.1 source.
+experiments/gpu_smoke_test.sh, plus policy.optimizer_lr, the policy.scheduler_*
+flags, log_freq and the MetricsTracker log-line format read from the same
+v0.6.1 source.
 TODO(GPU host): re-check against the installed lerobot if it is not v0.6.1:
 policy.type, policy.pretrained_path, policy.train_expert_only,
 policy.freeze_vision_encoder, policy.gradient_checkpointing, policy.dtype,
-policy.push_to_hub, policy.optimizer_lr, dataset.repo_id, dataset.root,
-output_dir, job_name, seed, steps, batch_size, save_freq, log_freq,
-wandb.enable, and the MetricsTracker log-line format.
+policy.push_to_hub, policy.optimizer_lr, policy.scheduler_warmup_steps,
+policy.scheduler_decay_steps, policy.scheduler_decay_lr, dataset.repo_id,
+dataset.root, output_dir, job_name, seed, steps, batch_size, save_freq,
+log_freq, wandb.enable, and the MetricsTracker log-line format.
 """
 
 from __future__ import annotations
@@ -48,13 +50,28 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Method name -> lerobot policy flags. H1+ are added here. An oracle run is the
 # h0 recipe on the held-out task's own dataset, not a separate method.
 METHODS: dict[str, dict[str, str]] = {
+    # Naive full fine-tuning: every parameter trains (lerobot's defaults, stated explicitly).
     "h0": {
+        "policy.train_expert_only": "false",
+        "policy.freeze_vision_encoder": "false",
+    },
+    "expert_only": {
         # train_expert_only freezes all of PaliGemma, vision tower included, so
         # freeze_vision_encoder is redundant; false matches the smoke test.
         "policy.train_expert_only": "true",
         "policy.freeze_vision_encoder": "false",
     },
 }
+
+# PI05Config defaults in v0.6.1: optimizer_lr is the cosine schedule's peak,
+# scheduler_decay_lr its floor (a tenth of the peak), scheduler_warmup_steps 1000.
+PI05_OPTIMIZER_LR = 2.5e-5
+PI05_DECAY_LR_DIVISOR = 10
+PI05_WARMUP_STEPS = 1000
+
+# On a MIG slice an OOM surfaces as the NVML assert, not as "CUDA out of memory"
+# (see docs/COMPUTE.md).
+OOM_MARKERS = ("CUDA out of memory", "NVML_SUCCESS == r INTERNAL ASSERT FAILED")
 
 # pi05 normalizes these with QUANTILES; lerobot fails on the first batch without q01/q99.
 QUANTILE_FEATURES = ("observation.state", "action")
@@ -68,6 +85,31 @@ METRICS_LINE = re.compile(
 )
 
 _SUFFIXES = ["", "K", "M", "B", "T", "Q"]
+
+
+def classify_failure(lines) -> str:
+    """"oom" if any of the lines shows an out-of-memory error, else "error"."""
+    return "oom" if any(marker in line for line in lines for marker in OOM_MARKERS) else "error"
+
+
+def decay_lr(peak_lr: float) -> float:
+    return float(f"{peak_lr / PI05_DECAY_LR_DIVISOR:.12g}")  # 1e-6, not 1.0000000000000002e-06
+
+
+def scheduler_flags(args: argparse.Namespace) -> dict[str, str]:
+    """Cosine schedule decaying over exactly --steps.
+
+    v0.6.1's CosineDecayWithWarmupSchedulerConfig.build() rescales warmup and
+    decay only when steps < scheduler_decay_steps (30000); with more steps the
+    lr would sit at the floor after step 30000. Passing decay_steps=steps
+    makes the schedule follow --steps either way, and the warmup is ours, not
+    a rescaled one.
+    """
+    return {
+        "policy.scheduler_warmup_steps": str(args.warmup_steps),
+        "policy.scheduler_decay_steps": str(args.steps),
+        "policy.scheduler_decay_lr": repr(decay_lr(args.lr)),
+    }
 
 
 def parse_metrics_line(line: str) -> Optional[dict]:
@@ -134,10 +176,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", required=True, type=int, help="explicit; never defaulted")
     p.add_argument("--dataset-root", default=None, help="local dataset path, if not on the Hub")
     p.add_argument("--base", default="lerobot/pi05_base")
-    p.add_argument("--steps", type=_positive_int, default=30000)
-    p.add_argument("--batch-size", type=_positive_int, default=1)
-    p.add_argument("--lr", type=float, default=5e-5)
-    p.add_argument("--save-freq", type=_positive_int, default=5000)
+    p.add_argument("--steps", type=_positive_int, default=10000)
+    # 16 is the throughput optimum for full fine-tuning on one MIG 3g.40gb slice (docs/COMPUTE.md).
+    p.add_argument("--batch-size", type=_positive_int, default=16)
+    p.add_argument("--lr", type=float, default=PI05_OPTIMIZER_LR, help="peak of the cosine schedule")
+    p.add_argument("--warmup-steps", type=_positive_int, default=PI05_WARMUP_STEPS)
+    p.add_argument("--save-freq", type=_positive_int, default=1000)
     p.add_argument("--log-freq", type=_positive_int, default=200,
                    help="passed to lerobot; also needed to recover exact steps from its log")
     p.add_argument("--wandb", type=_bool, default=False)
@@ -164,6 +208,7 @@ def build_lerobot_argv(args: argparse.Namespace, output: Path) -> list[str]:
         "policy.gradient_checkpointing": "true",
         "policy.dtype": "bfloat16",  # pi05 defaults to float32
         "policy.optimizer_lr": repr(args.lr),  # the policy preset overrides --optimizer.lr
+        **scheduler_flags(args),
         "policy.push_to_hub": "false",  # defaults to true
         "dataset.repo_id": args.dataset,
         **({"dataset.root": args.dataset_root} if args.dataset_root else {}),
@@ -256,6 +301,9 @@ def build_config(args: argparse.Namespace, argv: list[str]) -> dict:
     return {
         "args": {k: v for k, v in vars(args).items() if k != "dry_run"},
         "method_flags": METHODS[args.method],
+        "scheduler": {"type": "cosine_decay_with_warmup", "peak_lr": args.lr,
+                      "decay_lr": decay_lr(args.lr),
+                      "warmup_steps": args.warmup_steps, "decay_steps": args.steps},
         "lerobot_argv": argv,
         "git_commit": _git("rev-parse", "HEAD") or "unknown",
         "git_dirty": None if status is None else bool(status),
@@ -285,6 +333,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     if output.exists() and (output.is_file() or any(output.iterdir())):
         print(f"error: --output {output} already exists and is not empty; "
               "past runs are never overwritten, pick a new run directory", file=sys.stderr)
+        return 2
+    if args.warmup_steps >= args.steps:
+        print(f"error: --warmup-steps ({args.warmup_steps}) must be below --steps ({args.steps})",
+              file=sys.stderr)
         return 2
 
     # Fatal in a real run; in a dry run only reported, so a preview works offline.
@@ -326,9 +378,12 @@ def _run(lerobot_argv: list[str], output: Path, total_steps: int, log_freq: int)
     tail: deque[str] = deque(maxlen=30)  # printed to stderr if the run fails
     last: dict = {"step": None, "loss": None}
 
-    def result(status: str, exit_code: Optional[int]) -> dict:
-        return {"status": status, "exit_code": exit_code, "end_time": _now(),
-                "last_step": last["step"], "last_loss": last["loss"]}
+    def result(status: str, exit_code: Optional[int], failure: Optional[str] = None) -> dict:
+        out = {"status": status, "exit_code": exit_code, "end_time": _now(),
+               "last_step": last["step"], "last_loss": last["loss"]}
+        if status == "failed":
+            out["failure"] = failure or "error"
+        return out
 
     def on_signal(signum, _frame):
         nonlocal stop_requested
@@ -383,11 +438,13 @@ def _run(lerobot_argv: list[str], output: Path, total_steps: int, log_freq: int)
 
     exit_code = 128 - rc if rc < 0 else rc  # killed by signal N -> 128+N, as a shell reports it
     status = "stopped" if stop_requested else ("done" if rc == 0 else "failed")
+    failure = None
     if status == "failed":
         for line in tail:
             print(f"| {line}", file=sys.stderr)
         sys.stderr.flush()
-    _write_json(output / "result.json", result(status, exit_code))
+        failure = classify_failure(tail)
+    _write_json(output / "result.json", result(status, exit_code, failure))
     _say(f"STATUS {status} exit={exit_code}")
     return exit_code
 

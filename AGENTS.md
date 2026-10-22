@@ -30,12 +30,14 @@ Terms used throughout the code; they are not self-explanatory from names alone.
 
 ## Tech stack
 
-- Python 3.10+ · PyTorch
-- LeRobot (pinned to a release tag, not PyPI latest) for hardware I/O, dataset format, training
+- Python 3.12+ (lerobot v0.6.1 requires it) · PyTorch
+- LeRobot pinned to v0.6.1 (not PyPI latest) for hardware I/O, dataset format,
+  training. GPU host: `lerobot[pi,async,training]`; robot side: `lerobot[feetech]`.
 - Training is LeRobot-native: `lerobot-train --policy.type=pi05` starting from
-  `lerobot/pi05_base`, with `train_expert_only=true` for H0. LoRA is not used
-  (unsupported for π0.5).
-- TODO: pin exact versions and package manager (uv vs pip) once the env is built
+  `lerobot/pi05_base`. H0 is full fine-tuning (`train_expert_only=false`,
+  `freeze_vision_encoder=false`) at batch 16, the most one A100 MIG 3g.40gb
+  slice holds (docs/COMPUTE.md). LoRA is not used (unsupported for π0.5).
+- TODO: pin the package manager (uv vs pip) once the env is built
 
 ## Commands
 
