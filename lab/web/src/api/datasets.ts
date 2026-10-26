@@ -39,3 +39,36 @@ export function episodeVideoUrl(dataset: DatasetSummary, index: number, camera?:
 export function loadEpisodeVideos(dataset: DatasetSummary, index: number, signal: AbortSignal) {
   return hardwareRequest<EpisodeVideo[]>(episodeVideoUrl(dataset, index), { signal });
 }
+
+
+export type EpisodeJoints = {
+  episode_index: number;
+  joint_names: string[];
+  frame_indices: number[];
+  timestamps: number[];
+  positions: (number | null)[][];
+};
+
+export function loadEpisodeJoints(
+  dataset: DatasetSummary,
+  index: number,
+  signal: AbortSignal,
+) {
+  return hardwareRequest<EpisodeJoints>(
+    `/api/datasets/${dataset.backend}/${encodeURIComponent(dataset.name)}/episodes/${index}/joints`,
+    { signal },
+  );
+}
+
+export type DatasetDeleteResult = {
+  id: string;
+  archive_id: string;
+  archive_location: string;
+};
+
+export function deleteDataset(dataset: DatasetSummary) {
+  return hardwareRequest<DatasetDeleteResult>(
+    `/api/datasets/${dataset.backend}/${encodeURIComponent(dataset.name)}`,
+    { method: 'DELETE' },
+  );
+}
