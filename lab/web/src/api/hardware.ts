@@ -20,6 +20,22 @@ export type HardwareConfig = {
   lock: { owner: string } | null;
 };
 
+export type CalibrationJointStatus = {
+  current: number | null;
+  min: number | null;
+  max: number | null;
+  recorded: boolean;
+  span: number | null;
+  range_status:
+    | 'missing'
+    | 'invalid'
+    | 'insufficient'
+    | 'minimum_met'
+    | 'fixed';
+  range_message: string;
+  range_ok: boolean;
+};
+
 export type CalibrationStatus = {
   backend: Backend;
   state: string;
@@ -29,7 +45,8 @@ export type CalibrationStatus = {
   instruction: string;
   error: string | null;
   saved_path: string | null;
-  joints: Record<string, { current: number; min: number | null; max: number | null }>;
+  joints: Record<string, CalibrationJointStatus>;
+  range_check_passed: boolean;
 };
 
 export type TeleopStatus = {
@@ -42,18 +59,34 @@ export type TeleopStatus = {
 };
 
 export type JointFrame =
-  | { type: 'teleop'; leader: Record<string, number>; follower: Record<string, number> }
-  | { type: 'calibration'; arm: Arm; state: string; joints: CalibrationStatus['joints'] };
+  | {
+      type: 'teleop';
+      leader: Record<string, number>;
+      follower: Record<string, number>;
+    }
+  | {
+      type: 'calibration';
+      arm: Arm;
+      state: string;
+      joints: CalibrationStatus['joints'];
+    };
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Hardware request failed.';
 }
 
-export async function hardwareRequest<T>(path: string, options?: RequestInit): Promise<T> {
+export async function hardwareRequest<T>(
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
   const response = await fetch(path, options);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(typeof body?.detail === 'string' ? body.detail : `Request failed: HTTP ${response.status}`);
+    throw new Error(
+      typeof body?.detail === 'string'
+        ? body.detail
+        : `Request failed: HTTP ${response.status}`,
+    );
   }
   return response.json() as Promise<T>;
 }
@@ -61,10 +94,12 @@ export async function hardwareRequest<T>(path: string, options?: RequestInit): P
 export function hardwarePost<T>(path: string, body?: unknown): Promise<T> {
   return hardwareRequest<T>(path, {
     method: 'POST',
-    ...(body === undefined ? {} : {
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
   });
 }
 
@@ -85,5 +120,7 @@ export async function loadTeleop(signal: AbortSignal) {
 }
 
 export function jointLabel(joint: string): string {
-  return joint.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
+  return joint
+    .replaceAll('_', ' ')
+    .replace(/^./, (letter) => letter.toUpperCase());
 }

@@ -97,3 +97,7 @@ def ensure_dirs(base: Path | None = None) -> Path:
     for sub in SUBDIRS:
         (r / sub).mkdir(parents=True, exist_ok=True)
     return r
+
+
+def dataset_trash_dir(base: Path | None = None) -> Path:
+    return root(base) / "trash" / "datasets"

@@ -3,6 +3,10 @@ from fastapi.responses import FileResponse
 
 from lab.core.datasets import Backend, DatasetDetail, DatasetSummary, get_dataset, list_datasets
 from lab.core.dataset_video import EpisodeVideo, episode_videos, episode_video_file
+from lab.core.dataset_joints import read_episode_joints
+from lab.core.datasets import dataset_root
+from lab.core.dataset_delete import archive_dataset
+from lab.core.hardware import HardwareBusy
 
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -41,3 +45,84 @@ def video_list(backend: Backend, name: str, request: Request, episode_index: int
 def video_file(backend: Backend, name: str, camera: str, request: Request, episode_index: int = Path(ge=0)):
     path = _video_read(episode_video_file, backend, name, episode_index, camera, request.app.state.data_base)
     return FileResponse(path, media_type="video/mp4")
+
+
+@router.get(
+    "/{backend}/{name}/episodes/{episode_index}/joints",
+)
+def episode_joints(
+    backend: Backend,
+    name: str,
+    request: Request,
+    episode_index: int = Path(ge=0),
+) -> dict:
+    try:
+        root = dataset_root(
+            backend,
+            name,
+            request.app.state.data_base,
+        )
+        return read_episode_joints(root, episode_index)
+
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from None
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from None
+
+    except (OSError, ImportError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Joint data unavailable: {exc}",
+        ) from None
+
+
+@router.delete("/{backend}/{name}")
+def delete_dataset(
+    backend: Backend,
+    name: str,
+    request: Request,
+) -> dict:
+    try:
+        with request.app.state.collection_gate:
+            if request.app.state.collection.is_active():
+                raise HTTPException(
+                    status_code=409,
+                    detail="Stop collection before deleting a dataset",
+                )
+
+            return archive_dataset(
+                backend,
+                name,
+                request.app.state.data_base,
+            )
+
+    except HardwareBusy as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from None
+
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from None
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from None
+
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot archive dataset: {exc}",
+        ) from None

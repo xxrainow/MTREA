@@ -1,11 +1,80 @@
 import { useState } from 'react';
 import { hardwarePost, jointLabel, loadDevices } from '../api/hardware';
-import type { Arm } from '../api/hardware';
+import type { Arm, CalibrationJointStatus } from '../api/hardware';
 import { useHardwareAction, useHardwarePoll } from '../hooks/useHardware';
 import './DevicesPage.css';
 
 import CameraPreviewPanel from '../components/CameraPreviewPanel';
 import { useCameras } from '../hooks/useCameras';
+
+const rangeStatusLabels: Record<string, string> = {
+  missing: 'No measurement',
+  invalid: 'Invalid range',
+  insufficient: 'Move more',
+  minimum_met: 'Minimum check passed',
+  fixed: 'Fixed range',
+};
+
+function CalibrationRangeBar({
+  value,
+  status,
+}: {
+  value: CalibrationJointStatus | undefined;
+  status: string;
+}) {
+  if (status === 'fixed') {
+    return <span className="device-description">Fixed range</span>;
+  }
+
+  const minimum = value?.min;
+  const maximum = value?.max;
+  const current = value?.current;
+
+  const hasRange =
+    minimum != null && maximum != null && current != null && maximum >= minimum;
+
+  const position = hasRange
+    ? maximum === minimum
+      ? 50
+      : Math.max(
+          0,
+          Math.min(100, ((current - minimum) / (maximum - minimum)) * 100),
+        )
+    : null;
+
+  const showMarker =
+    position !== null && status !== 'unknown' && status !== 'pending';
+
+  return (
+    <div className="calibration-range-bar" data-status={status}>
+      <div className="calibration-range-values">
+        <span>Min {minimum ?? '—'}</span>
+        <span>Max {maximum ?? '—'}</span>
+      </div>
+
+      <div
+        className="calibration-range-track"
+        role="img"
+        aria-label={
+          showMarker
+            ? `Measured range ${minimum} to ${maximum}, current ${current}`
+            : 'Range measurement unavailable'
+        }
+      >
+        {showMarker && (
+          <span
+            className="calibration-range-marker"
+            style={{ left: `${position}%` }}
+          />
+        )}
+      </div>
+
+      <div className="calibration-range-caption">
+        Current {current ?? '—'} · Span {value?.span ?? '—'}
+      </div>
+    </div>
+  );
+}
 
 function DevicesPage() {
   const { data, error: pollError, refresh } = useHardwarePoll(loadDevices);
@@ -26,7 +95,6 @@ function DevicesPage() {
   const step = calibration ? `${calibration.arm}:${calibration.state}` : '';
 
   const cameras = useCameras();
-
 
   function detect(arm: Arm) {
     void act('Starting port detection', async () => {
@@ -275,17 +343,57 @@ function DevicesPage() {
                   <th scope="col">Current</th>
                   <th scope="col">Min</th>
                   <th scope="col">Max</th>
+                  <th scope="col">Span</th>
+                  <th scope="col">Measured range</th>
+                  <th scope="col">Check</th>
                 </tr>
               </thead>
+
               <tbody>
                 {config?.joint_order.map((joint) => {
                   const value = calibration.joints[joint];
+                  const measuringStarted = calibration.state !== 'homing';
+
+                  const status = unavailable
+                    ? 'unknown'
+                    : measuringStarted
+                      ? (value?.range_status ?? 'missing')
+                      : 'pending';
+
+                  const label = unavailable
+                    ? 'Unconfirmed'
+                    : measuringStarted
+                      ? (rangeStatusLabels[status] ?? 'No measurement')
+                      : 'Not measured yet';
+
                   return (
                     <tr key={joint}>
                       <th scope="row">{jointLabel(joint)}</th>
                       <td>{value?.current ?? '—'}</td>
                       <td>{value?.min ?? '—'}</td>
                       <td>{value?.max ?? '—'}</td>
+                      <td>{value?.span ?? '—'}</td>
+                      <td>
+                        <CalibrationRangeBar value={value} status={status} />
+                      </td>
+                      <td>
+                        <span
+                          className="calibration-range-status"
+                          data-status={status}
+                          title={value?.range_message}
+                        >
+                          {label}
+                        </span>
+
+                        {!unavailable &&
+                          measuringStarted &&
+                          value &&
+                          !value.range_ok && (
+                            <small className="calibration-range-message">
+                              {value.range_message}
+                            </small>
+                          )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -293,6 +401,19 @@ function DevicesPage() {
             </table>
           </div>
         )}
+
+        {calibration?.state === 'recording_ranges' && !unavailable && (
+          <p className="device-description" role="status">
+            {calibration.range_check_passed
+              ? 'All joints passed the minimum movement check.'
+              : 'Some joints need more movement or valid readings.'}
+          </p>
+        )}
+
+        <p className="device-description">
+          Span is Max − Min in raw encoder steps. Passing the minimum movement
+          check does not verify full-range coverage.
+        </p>
         <div className="device-actions">
           <button
             type="button"
@@ -300,7 +421,9 @@ function DevicesPage() {
               busy ||
               unavailable ||
               !calibration?.can_next ||
-              advancedStep === step
+              advancedStep === step ||
+              (calibration?.state === 'recording_ranges' &&
+                !calibration.range_check_passed)
             }
             onClick={() =>
               void act('Advancing calibration', async () => {

@@ -58,6 +58,60 @@ def _instruction(state: str, arm: str | None, detail: str) -> str:
     }[state]
 
 
+def assess_joint_range(
+    joint: str,
+    minimum: int | None,
+    maximum: int | None,
+) -> dict:
+    if joint not in JOINT_ORDER:
+        raise ValueError(f"Unknown joint: {joint}")
+
+    span = (
+        maximum - minimum
+        if minimum is not None and maximum is not None
+        else None
+    )
+
+    if joint == FULL_TURN_JOINT:
+        span = None
+        status = "fixed"
+        message = "Uses a fixed range; movement measurement is not required."
+        range_ok = True
+
+    elif span is None:
+        status = "missing"
+        message = "No valid range readings."
+        range_ok = False
+
+    elif span < 0:
+        status = "invalid"
+        message = "Maximum is smaller than minimum."
+        range_ok = False
+
+    elif span < MIN_RANGE:
+        status = "insufficient"
+        message = (
+            f"Moved {span} steps; "
+            f"at least {MIN_RANGE} steps are required."
+        )
+        range_ok = False
+
+    else:
+        status = "minimum_met"
+        message = (
+            "Minimum movement check passed. "
+            "Full-range coverage is not verified."
+        )
+        range_ok = True
+
+    return {
+        "span": span,
+        "range_status": status,
+        "range_message": message,
+        "range_ok": range_ok,
+    }
+    
+
 class CalibrationSession:
     def __init__(self, backend: Any, lock: HardwareLock, stream: JointStream,
                  configs_dir: Path = CONFIGS_DIR, poll_s: float = 0.05):
@@ -122,16 +176,42 @@ class CalibrationSession:
         with self._mutex:
             state, arm = self._state, self._arm
             joints = {}
-            for joint in JOINT_ORDER:
-                if joint not in self._current:
-                    continue
-                recorded = state != HOMING and joint != FULL_TURN_JOINT and joint in self._mins
-                joints[joint] = {
-                    "current": self._current[joint],
-                    "min": self._mins[joint] if recorded else None,
-                    "max": self._maxes[joint] if recorded else None,
-                    "recorded": recorded,
-                }
+        
+            if self._current:
+                for joint in JOINT_ORDER:
+                    recorded = (
+                        state != HOMING
+                        and joint != FULL_TURN_JOINT
+                        and joint in self._mins
+                        and joint in self._maxes
+                    )
+        
+                    minimum = self._mins[joint] if recorded else None
+                    maximum = self._maxes[joint] if recorded else None
+        
+                    assessment = assess_joint_range(
+                        joint,
+                        minimum,
+                        maximum,
+                    )
+        
+                    joints[joint] = {
+                        "current": self._current.get(joint),
+                        "min": minimum,
+                        "max": maximum,
+                        "recorded": recorded,
+                        **assessment,
+                    }
+        
+            range_check_passed = (
+                state == RECORDING
+                and len(joints) == len(JOINT_ORDER)
+                and all(
+                    value["range_ok"]
+                    for value in joints.values()
+                )
+            )
+        
             return {
                 "backend": self.backend.name,
                 "state": state,
@@ -140,8 +220,13 @@ class CalibrationSession:
                 "can_next": state in (HOMING, RECORDING),
                 "instruction": _instruction(state, arm, self._detail),
                 "error": self._detail if state == ERROR else None,
-                "saved_path": str(self._saved_path) if self._saved_path else None,
+                "saved_path": (
+                    str(self._saved_path)
+                    if self._saved_path
+                    else None
+                ),
                 "joints": joints,
+                "range_check_passed": range_check_passed,
             }
 
     # --- worker ---
@@ -225,15 +310,35 @@ class CalibrationSession:
             self._mins[joint] = min(self._mins[joint], pos)
             self._maxes[joint] = max(self._maxes[joint], pos)
 
+        
     def _range_problems(self) -> list[str]:
         problems = []
+
         for joint in JOINT_ORDER:
-            if joint == FULL_TURN_JOINT:
+            assessment = assess_joint_range(
+                joint,
+                self._mins.get(joint),
+                self._maxes.get(joint),
+            )
+
+            if assessment["range_ok"]:
                 continue
-            if joint not in self._mins:
-                problems.append(f"{joint} gave no valid reading")
-                continue
-            span = self._maxes[joint] - self._mins[joint]
-            if span < MIN_RANGE:
-                problems.append(f"{joint} moved only {span} steps (needs at least {MIN_RANGE})")
+
+            status = assessment["range_status"]
+
+            if status == "missing":
+                problems.append(
+                    f"{joint} gave no valid reading"
+                )
+            elif status == "insufficient":
+                span = assessment["span"]
+                problems.append(
+                    f"{joint} moved only {span} steps "
+                    f"(needs at least {MIN_RANGE})"
+                )
+            else:
+                problems.append(
+                    f"{joint}: {assessment['range_message']}"
+                )
+
         return problems
