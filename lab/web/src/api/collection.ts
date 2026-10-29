@@ -15,7 +15,6 @@ export type CollectionSessionInput = Omit<
 
 export type CollectionStartInput = {
   dataset: string;
-  seed: number;
   session_index: number;
   sessions: CollectionSessionInput[];
 };
@@ -41,6 +40,7 @@ export type CollectionStatus = {
   total_episodes: number;
   saved_episodes: number;
   episode_phase: string | null;
+  phase_id: string | null;
   phase_elapsed_s: number;
   phase_duration_s: number | null;
   session_elapsed_s: number;
@@ -84,8 +84,9 @@ export function loadCollectionStatus(
 
 
 export type CollectionCommandInput = {
-  action: 'start_episode' | 'finish_episode';
+  action: 'start_episode' | 'finish_episode' | 'retry_episode';
   recording_id: string;
+  expected_phase_id: string;
   expected_phase: 'preparing' | 'recording' | 'resetting';
   expected_episode: number;
 };

@@ -37,16 +37,19 @@ class FakeRecordingProcess:
         self._exit_code: int | None = None
         self._progress_lock = Lock()
         self._phase = "connecting"
+        self._phase_id = uuid4().hex
         self._phase_started = monotonic()
         self._duration = 0.0
         self._phase_active = False
         self._episode = 1
         self._saved = 0
+        self._retry_requested = False
 
     def progress(self) -> dict:
         with self._progress_lock:
             return {
                 "episode_phase": self._phase,
+                "phase_id": self._phase_id,
                 "phase_elapsed_s": min(
                     self._duration, max(0.0, monotonic() - self._phase_started)
                 ),
@@ -59,6 +62,7 @@ class FakeRecordingProcess:
         with self._progress_lock:
             self._advance.clear()
             self._phase = phase
+            self._phase_id = uuid4().hex
             self._duration = duration
             self._phase_started = monotonic()
             self._phase_active = duration > 0 and not self._stop.is_set()
@@ -75,12 +79,13 @@ class FakeRecordingProcess:
         self,
         action: str,
         *,
+        expected_phase_id: str,
         expected_phase: str,
         expected_episode: int,
     ) -> str:
         allowed_actions = {
             "preparing": ("start_episode",),
-            "recording": ("finish_episode",),
+            "recording": ("finish_episode", "retry_episode"),
             "resetting": ("start_episode",),
         }
 
@@ -89,6 +94,7 @@ class FakeRecordingProcess:
                 not self._phase_active
                 or self._stop.is_set()
                 or self._phase != expected_phase
+                or self._phase_id != expected_phase_id
                 or self._episode != expected_episode
             ):
                 raise SessionStateError("Recording phase or episode has changed")
@@ -100,6 +106,7 @@ class FakeRecordingProcess:
                 raise SessionStateError("A recording command is still pending")
 
             command_id = uuid4().hex
+            self._retry_requested = action == "retry_episode"
             self._advance.set()
             return command_id
 
@@ -165,7 +172,8 @@ class FakeRecordingProcess:
         if not self._stage("preparing", self.PREPARATION_SECONDS):
             return
 
-        for index in range(count):
+        index = 0
+        while index < count:
             with self._progress_lock:
                 self._episode = index + 1
             if not self._stage(
@@ -173,8 +181,17 @@ class FakeRecordingProcess:
             ):
                 break
 
-            if index < count - 1:
+            with self._progress_lock:
+                retry = self._retry_requested
+                self._retry_requested = False
+
+            if index < count - 1 or retry:
                 self._stage("resetting", float(self._args["dataset.reset_time_s"]))
+
+            if retry:
+                if self._stop.is_set():
+                    break
+                continue
 
             self._stage("saving")
             episode = {
@@ -188,6 +205,7 @@ class FakeRecordingProcess:
             self._write_info(info_path, len(episodes))
             with self._progress_lock:
                 self._saved += 1
+            index += 1
             if self._stop.is_set():
                 break
 

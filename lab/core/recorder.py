@@ -168,6 +168,7 @@ class RecordingProcess:
         self,
         action: str,
         *,
+        expected_phase_id: str,
         expected_phase: str,
         expected_episode: int,
     ) -> str:
@@ -209,6 +210,7 @@ class RecordingProcess:
                 "id": command_id,
                 "recording_id": self.recording_id,
                 "action": action,
+                "expected_phase_id": expected_phase_id,
                 "expected_phase": expected_phase,
                 "expected_episode": expected_episode,
             }
@@ -255,6 +257,7 @@ def wait_and_verify(
     episodes_before: int,
     requested_episodes: int,
     instruction: str,
+    allow_partial: bool = False,
 ) -> RecordingResult:
     exit_code = recording.wait()
     ended_at = datetime.now().astimezone().isoformat(
@@ -267,6 +270,7 @@ def wait_and_verify(
         requested_episodes,
         instruction,
         exit_code,
+        allow_partial=allow_partial,
     )
 
     return RecordingResult(

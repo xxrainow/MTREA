@@ -83,6 +83,7 @@ class CollectionService:
         action: str,
         *,
         recording_id: str,
+        expected_phase_id: str,
         expected_phase: str,
         expected_episode: int,
     ) -> str:
@@ -118,7 +119,8 @@ class CollectionService:
             status = self._snapshot_locked()
 
             if (
-                status.episode_phase != expected_phase
+                status.phase_id != expected_phase_id
+                or status.episode_phase != expected_phase
                 or status.current_episode != expected_episode
             ):
                 raise SessionStateError(
@@ -134,6 +136,7 @@ class CollectionService:
 
             return recording.send_command(
                 action,
+                expected_phase_id=expected_phase_id,
                 expected_phase=expected_phase,
                 expected_episode=(
                     expected_episode - self._recorded_before
@@ -317,6 +320,7 @@ class CollectionService:
 
             with self._lock:
                 self._status = self._snapshot_locked()
+                interrupted = self._status.stop_requested
                 self._status = replace(
                     self._status,
                     phase=CollectionPhase.VERIFYING,
@@ -328,6 +332,7 @@ class CollectionService:
                 episodes_before=episodes_before,
                 requested_episodes=num_episodes,
                 instruction=instruction,
+                allow_partial=interrupted,
             )
 
             with self._lock:
@@ -366,7 +371,8 @@ class CollectionService:
                     "ended_at": result.ended_at,
                     "lerobot_exit_code": result.exit_code,
                     "status": (
-                        "mismatch" if result.problems else "ok"
+                        "mismatch" if result.problems else
+                        "interrupted" if interrupted and added < num_episodes else "ok"
                     ),
                     "ok": not result.problems,
                     "interrupted": interrupted,

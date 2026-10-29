@@ -4,6 +4,7 @@ import json
 import time
 from pathlib import Path
 from threading import Event, Lock, Thread
+from uuid import uuid4
 
 from robot.config import CAMERAS
 
@@ -25,8 +26,10 @@ class TelemetryWriter:
         self.stage("connecting")
 
     def stage(self, phase: str, duration: float | None = None, error: str | None = None):
+        self.phase_id = uuid4().hex
         atomic_write(self.root / "progress.json", json.dumps({
             "episode_phase": phase,
+            "phase_id": self.phase_id,
             "phase_started": time.monotonic(),
             "phase_duration_s": duration,
             "current_episode": self.current,
@@ -110,6 +113,7 @@ class TelemetryReader:
             preview_error = None
         return {
             "episode_phase": raw["episode_phase"],
+            "phase_id": raw.get("phase_id"),
             "phase_duration_s": duration,
             "phase_elapsed_s": min(duration, elapsed) if duration is not None else 0.0,
             "current_episode": raw["current_episode"],

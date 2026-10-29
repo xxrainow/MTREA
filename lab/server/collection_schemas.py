@@ -38,7 +38,6 @@ class CollectionSessionRequest(RequestModel):
 class CollectionPlanRequest(RequestModel):
     task: Literal["pick_place"]
     dataset: Identifier
-    seed: int
     target: Name
     distractor: bool
     positions: list[Name] = Field(min_length=1)
@@ -63,7 +62,6 @@ class CollectionSessionInput(RequestModel):
 
 class CollectionStartRequest(RequestModel):
     dataset: Identifier
-    seed: int
     session_index: int = Field(gt=0)
     sessions: list[CollectionSessionInput] = Field(min_length=1)
 
@@ -75,6 +73,7 @@ class CollectionCommandRequest(RequestModel):
         "retry_episode",
     ]
     recording_id: Name
+    expected_phase_id: Name
     expected_phase: Literal[
         "preparing",
         "recording",

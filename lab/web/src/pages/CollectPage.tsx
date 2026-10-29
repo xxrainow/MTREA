@@ -4,14 +4,16 @@ import CameraPreviewPanel from '../components/CameraPreviewPanel';
 import RecordingView from '../components/RecordingView';
 import { useCameras } from '../hooks/useCameras';
 import { useCollection } from '../hooks/useCollection';
+import type { DatasetReference } from '../api/datasets';
 
 import './CollectPage.css';
 
 type Props = {
   onBusyChange?: (busy: boolean) => void;
+  onOpenDataset?: (dataset: DatasetReference) => void;
 };
 
-function CollectPage({ onBusyChange }: Props) {
+function CollectPage({ onBusyChange, onOpenDataset }: Props) {
   const [datasetName, setDatasetName] = useState('pick_place_demo');
   const [instruction, setInstruction] = useState(
     'Pick up the red block and place it in the blue cup.',
@@ -19,7 +21,6 @@ function CollectPage({ onBusyChange }: Props) {
   const [episodeCount, setEpisodeCount] = useState('10');
   const [episodeSeconds, setEpisodeSeconds] = useState('20');
   const [resetSeconds, setResetSeconds] = useState('5');
-  const [seed, setSeed] = useState('');
 
   const [formError, setFormError] = useState('');
   const [showRecording, setShowRecording] = useState(false);
@@ -37,7 +38,6 @@ function CollectPage({ onBusyChange }: Props) {
       episodeCount,
       episodeSeconds,
       resetSeconds,
-      seed,
     ].every((value) => value.trim() !== '') &&
     /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(datasetName) &&
     Number.isSafeInteger(Number(episodeCount)) &&
@@ -45,8 +45,7 @@ function CollectPage({ onBusyChange }: Props) {
     Number.isFinite(Number(episodeSeconds)) &&
     Number(episodeSeconds) > 0 &&
     Number.isFinite(Number(resetSeconds)) &&
-    Number(resetSeconds) >= 0 &&
-    Number.isSafeInteger(Number(seed));
+    Number(resetSeconds) >= 0;
 
   const canStart = isFormValid && !busy && !collection.unavailable;
 
@@ -80,7 +79,6 @@ function CollectPage({ onBusyChange }: Props) {
       episodeCount,
       episodeSeconds,
       resetSeconds,
-      seed,
     ];
 
     if (fields.some((value) => value.trim() === '')) {
@@ -91,7 +89,6 @@ function CollectPage({ onBusyChange }: Props) {
     const count = Number(episodeCount);
     const duration = Number(episodeSeconds);
     const reset = Number(resetSeconds);
-    const parsedSeed = Number(seed);
 
     if (!Number.isSafeInteger(count) || count <= 0) {
       setFormError('Episode count must be a positive integer.');
@@ -110,14 +107,8 @@ function CollectPage({ onBusyChange }: Props) {
       return;
     }
 
-    if (!Number.isSafeInteger(parsedSeed)) {
-      setFormError('Seed must be a safe integer.');
-      return;
-    }
-
     const accepted = await collection.start({
       dataset: datasetName,
-      seed: parsedSeed,
       session_index: 1,
       sessions: [
         {
@@ -131,6 +122,21 @@ function CollectPage({ onBusyChange }: Props) {
     if (accepted) setShowRecording(true);
   }
 
+  function handleViewDataset() {
+    const status = collection.status;
+    const name = status?.dataset?.split('/').pop();
+
+    if (
+      !busy &&
+      status &&
+      (status.phase === 'finished' || status.phase === 'failed') &&
+      status.saved_episodes > 0 &&
+      name
+    ) {
+      onOpenDataset?.({ backend: status.backend, name });
+    }
+  }
+
   if (showRecording || busy) {
     return (
       <RecordingView
@@ -141,8 +147,22 @@ function CollectPage({ onBusyChange }: Props) {
         unavailable={collection.unavailable}
         error={collection.actionError || collection.pollError}
         onAdvance={() => void collection.advance()}
+        onRetry={() => {
+          if (window.confirm(
+            'Discard the current unsaved episode and record it again? Previously saved episodes will be kept.',
+          )) {
+            void collection.retry();
+          }
+        }}
         advancePending={collection.advancePending}
-        onStop={() => void collection.stop()}
+        onStop={() => {
+          if (window.confirm(
+            'Stop this collection? No further episodes will be recorded. Previously saved episodes will be kept. The current episode may not be saved; the final saved count will be shown after verification. To finish only this episode and continue collecting, use End episode instead.',
+          )) {
+            void collection.stop();
+          }
+        }}
+        onViewDataset={onOpenDataset ? handleViewDataset : undefined}
         onBack={() => setShowRecording(false)}
       />
     );
@@ -271,16 +291,6 @@ function CollectPage({ onBusyChange }: Props) {
                 type="text"
                 value={datasetName}
                 onChange={(event) => setDatasetName(event.target.value)}
-              />
-            </label>
-
-            <label className="collect-field">
-              Seed
-              <input
-                type="number"
-                step="1"
-                value={seed}
-                onChange={(event) => setSeed(event.target.value)}
               />
             </label>
 

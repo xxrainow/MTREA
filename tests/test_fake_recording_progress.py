@@ -79,7 +79,7 @@ def test_stop_interrupts_preparation_without_saving_episode(tmp_path):
 
 def request():
     return {
-        "dataset": "progress_demo", "seed": 42, "session_index": 1,
+        "dataset": "progress_demo", "session_index": 1,
         "sessions": [{"instruction": "Move the block.", "num_episodes": 2,
                       "episode_time_s": 0.03, "reset_time_s": 0.03}],
     }
@@ -172,6 +172,7 @@ def test_fake_command_api_advances_two_episodes_without_hardware(tmp_path, monke
             return client.post("/api/collection/command", json={
                 "action": action,
                 "recording_id": status["recording_id"],
+                "expected_phase_id": status["phase_id"],
                 "expected_phase": status["episode_phase"],
                 "expected_episode": status["current_episode"],
                 **overrides,

@@ -7,13 +7,15 @@ type Props = {
   status: CollectionStatus | null;
   receivedAt: number;
   active: boolean;
-  pending: 'start' | 'stop' | 'advance' | null;
+  pending: 'start' | 'stop' | 'advance' | 'retry' | null;
   advancePending: boolean;
   onAdvance: () => void;
+  onRetry: () => void;
   unavailable: boolean;
   error: string;
   onStop: () => void;
   onBack: () => void;
+  onViewDataset?: () => void;
 };
 
 function clock(seconds: number) {
@@ -56,6 +58,8 @@ export default function RecordingView({
   onBack,
   advancePending,
   onAdvance,
+  onRetry,
+  onViewDataset,
 }: Props) {
   const [now, setNow] = useState(() => performance.now());
 
@@ -80,6 +84,16 @@ export default function RecordingView({
   const stage = status?.episode_phase ?? 'connecting';
   const finished = status?.phase === 'finished';
   const failed = status?.phase === 'failed';
+  const stopped = finished && status.stop_requested;
+  const saved = status?.saved_episodes ?? 0;
+  const total = status?.total_episodes ?? 0;
+  const missing = Math.max(0, total - saved);
+  const canViewDataset =
+    !busy &&
+    (finished || failed) &&
+    (status?.saved_episodes ?? 0) > 0 &&
+    Boolean(status?.dataset) &&
+    Boolean(onViewDataset);
 
   let title = 'CONNECTING…';
   if (pending === 'start') title = 'CONNECTING…';
@@ -101,6 +115,7 @@ export default function RecordingView({
     active &&
     !unavailable &&
     status?.phase === 'recording' &&
+    Boolean(status.phase_id) &&
     !status.stop_requested &&
     (stage === 'preparing' ||
       stage === 'recording' ||
@@ -112,7 +127,7 @@ export default function RecordingView({
       ? 'Start next episode'
       : 'Start now';
 
-  const tone = failed ? 'error' : finished ? 'complete' : stage;
+  const tone = failed ? 'error' : stopped ? 'stopped' : finished ? 'complete' : stage;
 
   return (
     <main className="recording-view" data-stage={tone}>
@@ -139,31 +154,61 @@ export default function RecordingView({
         </div>
 
         <div className="recording-timer" aria-label="Time remaining">
-          <span>{remaining !== null ? clock(remaining) : finished ? 'DONE' : failed ? 'STOP' : '—'}</span>
+          <span>{remaining !== null ? clock(remaining) : stopped ? 'STOPPED' : finished ? 'DONE' : failed ? 'STOP' : '—'}</span>
           <small>{duration !== null ? `/ ${clock(duration)} · remaining` : busy ? 'Waiting for recorder progress' : 'Recording ended'}</small>
         </div>
 
-        <div className="recording-progress" role="progressbar" aria-label="Current phase progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={finished ? 100 : Math.round(progress)}><div style={{ width: `${finished ? 100 : progress}%` }} /></div>
+        <div className="recording-progress" role="progressbar" aria-label={stopped ? 'Episodes saved' : 'Current phase progress'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={stopped ? Math.round(total ? saved / total * 100 : 0) : finished ? 100 : Math.round(progress)}><div style={{ width: `${stopped ? (total ? saved / total * 100 : 0) : finished ? 100 : progress}%` }} /></div>
 
         <div className="recording-summary"><span><strong>{status?.saved_episodes ?? 0}</strong> / {status?.total_episodes ?? '—'} episodes saved</span><span>{status?.backend === 'fake' ? 'Simulated frames · metadata only' : 'Recorder progress · shared camera frames'}</span></div>
 
         {status?.preview_error && <p className="recording-error" role="alert">Preview: {status.preview_error}</p>}
 
+        {stopped && (
+          <div className="recording-notice" role="status">
+            <strong>Collection stopped. {saved} of {total} episodes are saved.</strong>
+            <p>{missing > 0
+              ? `The collection target was not reached. ${missing} more ${missing === 1 ? 'episode is' : 'episodes are'} needed. You can resume later with the same collection settings.`
+              : 'All requested episodes have been saved.'}</p>
+            <p>{saved > 0
+              ? 'The saved episodes are preserved. View the dataset to check the recorded results.'
+              : 'No episodes were saved.'}</p>
+          </div>
+        )}
+
         {(error || status?.error) && <p className="recording-error" role="alert">{error || status?.error}</p>}
         {canAdvance && (
-          <button
-            type="button"
-            className="recording-advance"
-            onClick={onAdvance}
-            disabled={pending !== null || advancePending}
-          >
-            {pending === 'advance' || advancePending
-              ? 'Waiting for recorder…'
-              : advanceLabel}
-          </button>
+          <div className="recording-episode-actions">
+            <button
+              type="button"
+              className="recording-advance"
+              onClick={onAdvance}
+              disabled={pending !== null || advancePending}
+            >
+              {pending === 'advance' || advancePending
+                ? 'Waiting for recorder…'
+                : advanceLabel}
+            </button>
+            {stage === 'recording' && (
+              <button
+                type="button"
+                className="recording-retry"
+                onClick={onRetry}
+                disabled={pending !== null || advancePending}
+              >
+                {pending === 'retry'
+                  ? 'Discarding take…'
+                  : advancePending
+                    ? 'Waiting for recorder…'
+                    : 'Discard & retry'}
+              </button>
+            )}
+          </div>
         )}
         {busy ? (
           <button type="button" className="recording-stop" onClick={onStop} disabled={pending !== null || status?.phase === 'stopping' || status?.phase === 'verifying'}>{pending === 'stop' || status?.phase === 'stopping' ? 'Stopping and saving…' : 'Stop recording'}</button>
+        ) : canViewDataset ? (
+          <button type="button" className="recording-return" onClick={onViewDataset}>View dataset</button>
         ) : <button type="button" className="recording-return" onClick={onBack}>Back to collection settings</button>}
         <p className="recording-hint">{active ? 'Episodes advance automatically. Use the button to end the current phase early.' : 'Saved episodes and collection history are preserved.'}</p>
       </section>

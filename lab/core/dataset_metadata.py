@@ -49,7 +49,7 @@ def read_episode_tasks(root: Path) -> dict[int, list[str]]:
 
 
 def verify(root: Path, before: int, requested: int, instruction: str,
-           exit_code: int) -> tuple[int | None, list[str]]:
+           exit_code: int, *, allow_partial: bool = False) -> tuple[int | None, list[str]]:
     """(episodes_after, problems) for one finished lerobot-record run."""
     problems = []
     if exit_code != 0:
@@ -60,8 +60,13 @@ def verify(root: Path, before: int, requested: int, instruction: str,
         return None, problems + [f"cannot read meta/info.json: {exc}"]
     if after is None:
         return None, problems + [f"no dataset at {root} after recording"]
-    if after - before != requested:
-        problems.append(f"episodes went {before} -> {after} (+{after - before}), expected +{requested}")
+    added = after - before
+    if not (0 <= added <= requested if allow_partial else added == requested):
+        problems.append(
+            f"Saved {added} new episodes, but expected "
+            f"{'between 0 and ' if allow_partial else ''}{requested}. "
+            f"The dataset contained {before} episodes before recording and {after} afterward."
+        )
     try:
         if instruction not in read_tasks(root):
             problems.append(f"instruction not registered as a task: {instruction!r}")
