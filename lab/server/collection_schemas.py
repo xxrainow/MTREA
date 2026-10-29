@@ -66,3 +66,23 @@ class CollectionStartRequest(RequestModel):
     seed: int
     session_index: int = Field(gt=0)
     sessions: list[CollectionSessionInput] = Field(min_length=1)
+
+
+class CollectionCommandRequest(RequestModel):
+    action: Literal[
+        "start_episode",
+        "finish_episode",
+        "retry_episode",
+    ]
+    recording_id: Name
+    expected_phase: Literal[
+        "preparing",
+        "recording",
+        "resetting",
+    ]
+    expected_episode: int = Field(gt=0)
+
+
+class CollectionCommandResponse(BaseModel):
+    command_id: str
+    status: Literal["queued"]

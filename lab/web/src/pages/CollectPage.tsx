@@ -140,6 +140,8 @@ function CollectPage({ onBusyChange }: Props) {
         pending={collection.pending}
         unavailable={collection.unavailable}
         error={collection.actionError || collection.pollError}
+        onAdvance={() => void collection.advance()}
+        advancePending={collection.advancePending}
         onStop={() => void collection.stop()}
         onBack={() => setShowRecording(false)}
       />

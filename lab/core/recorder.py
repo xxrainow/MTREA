@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from threading import Lock
 
 import yaml
 import os
@@ -12,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from lab.core.dataset_metadata import verify
-from lab.core.hardware import HardwareError
+from lab.core.hardware import HardwareError, SessionStateError
 from lab.core.hardware.devices import CONFIGS_DIR
 from robot.config import CAMERAS, FPS, ROBOT_TYPE, TELEOP_TYPE
 
@@ -143,6 +144,7 @@ class RecordingProcess:
         self.recording_id = uuid4().hex if telemetry else None
         self._telemetry_dir = TemporaryDirectory(prefix="mtrea-recording-") if telemetry else None
         self._telemetry = None
+        self._command_lock = Lock()
         options = {}
         if telemetry:
             from lab.core.recording_telemetry import TelemetryReader
@@ -161,6 +163,65 @@ class RecordingProcess:
 
     def progress(self) -> dict:
         return self._telemetry.progress() if self._telemetry else {}
+
+    def send_command(
+        self,
+        action: str,
+        *,
+        expected_phase: str,
+        expected_episode: int,
+    ) -> str:
+        from lab.core.recording_telemetry import atomic_write
+
+        allowed_actions = {
+            "start_episode",
+            "finish_episode",
+            "retry_episode",
+        }
+
+        if action not in allowed_actions:
+            raise ValueError(f"Unknown recording action: {action}")
+
+        if expected_episode < 1:
+            raise ValueError("Expected episode must be positive")
+
+        with self._command_lock:
+            if self._telemetry_dir is None:
+                raise SessionStateError(
+                    "Commands require a web recording process"
+                )
+
+            if self._process.poll() is not None:
+                raise SessionStateError(
+                    "Recording process has already exited"
+                )
+
+            root = Path(self._telemetry_dir.name)
+            command_path = root / "command.json"
+
+            if command_path.exists():
+                raise SessionStateError(
+                    "A recording command is still pending"
+                )
+
+            command_id = uuid4().hex
+            payload = {
+                "id": command_id,
+                "recording_id": self.recording_id,
+                "action": action,
+                "expected_phase": expected_phase,
+                "expected_episode": expected_episode,
+            }
+
+            atomic_write(
+                command_path,
+                json.dumps(
+                    payload,
+                    allow_nan=False,
+                ).encode("utf-8"),
+            )
+
+            return command_id
 
     def frame(self, name: str) -> bytes:
         if self._telemetry is None:
@@ -215,3 +276,5 @@ def wait_and_verify(
         episodes_after=episodes_after,
         problems=tuple(problems),
     )
+
+

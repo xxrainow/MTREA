@@ -50,3 +50,22 @@
   .recording-summary { margin: 10px 0 14px; }
 }
 @media (prefers-reduced-motion: reduce) { .recording-view .recording-sim-arm { animation: none !important; } .recording-progress > div { transition: none; } }
+
+.recording-advance {
+  width: 100%;
+  min-height: 52px;
+  margin-bottom: 12px;
+  padding: 12px 20px;
+  border: 1px solid #3b7056;
+  border-radius: 7px;
+  background: #203c33;
+  color: #b4f6cc;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.recording-advance:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
