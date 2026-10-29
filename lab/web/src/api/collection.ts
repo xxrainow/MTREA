@@ -81,3 +81,25 @@ export function loadCollectionStatus(
     { signal },
   );
 }
+
+
+export type CollectionCommandInput = {
+  action: 'start_episode' | 'finish_episode';
+  recording_id: string;
+  expected_phase: 'preparing' | 'recording' | 'resetting';
+  expected_episode: number;
+};
+
+export type CollectionCommandResult = {
+  command_id: string;
+  status: 'queued';
+};
+
+export function sendCollectionCommand(
+  input: CollectionCommandInput,
+): Promise<CollectionCommandResult> {
+  return hardwarePost<CollectionCommandResult>(
+    '/api/collection/command',
+    input,
+  );
+}

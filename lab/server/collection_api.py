@@ -10,6 +10,8 @@ from lab.core.hardware import (
     SessionStateError,
 )
 from lab.server.collection_schemas import (
+    CollectionCommandRequest,
+    CollectionCommandResponse,
     CollectionInputRequest,
     CollectionStartRequest,
 )
@@ -98,4 +100,44 @@ def stop_collection(request: Request) -> CollectionStatus:
     except OSError as exc:
         raise HTTPException(
             status_code=503, detail=str(exc)
+        ) from None
+
+
+@router.post(
+    "/command",
+    response_model=CollectionCommandResponse,
+    status_code=202,
+)
+def send_collection_command(
+    body: CollectionCommandRequest,
+    request: Request,
+) -> CollectionCommandResponse:
+    service: CollectionService = request.app.state.collection
+
+    try:
+        command_id = service.send_command(
+            **body.model_dump()
+        )
+
+        return CollectionCommandResponse(
+            command_id=command_id,
+            status="queued",
+        )
+
+    except SessionStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from None
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from None
+
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
         ) from None

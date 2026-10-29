@@ -4,8 +4,10 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event, Lock
 from time import monotonic
+from uuid import uuid4
 
 from lab.core.dataset_metadata import read_jsonl
+from lab.core.hardware import SessionStateError
 
 
 def fake_collection_enabled() -> bool:
@@ -21,6 +23,7 @@ class FakeRecordingProcess:
     PREPARATION_SECONDS = 3.0
 
     def __init__(self, command: list[str]) -> None:
+        self.recording_id = uuid4().hex
         self.started_at = datetime.now().astimezone().isoformat(
             timespec="seconds"
         )
@@ -29,12 +32,14 @@ class FakeRecordingProcess:
             for item in command[1:]
         )
         self._stop = Event()
+        self._advance = Event()
         self._wait_lock = Lock()
         self._exit_code: int | None = None
         self._progress_lock = Lock()
-        self._phase = "preparing"
+        self._phase = "connecting"
         self._phase_started = monotonic()
-        self._duration = self.PREPARATION_SECONDS
+        self._duration = 0.0
+        self._phase_active = False
         self._episode = 1
         self._saved = 0
 
@@ -52,13 +57,56 @@ class FakeRecordingProcess:
 
     def _stage(self, phase: str, duration: float = 0.0) -> bool:
         with self._progress_lock:
+            self._advance.clear()
             self._phase = phase
             self._duration = duration
             self._phase_started = monotonic()
-        return not self._stop.wait(duration)
+            self._phase_active = duration > 0 and not self._stop.is_set()
+            if self._stop.is_set():
+                return False
+
+        self._advance.wait(duration)
+
+        with self._progress_lock:
+            self._phase_active = False
+            return not self._stop.is_set()
+
+    def send_command(
+        self,
+        action: str,
+        *,
+        expected_phase: str,
+        expected_episode: int,
+    ) -> str:
+        allowed_actions = {
+            "preparing": ("start_episode",),
+            "recording": ("finish_episode",),
+            "resetting": ("start_episode",),
+        }
+
+        with self._progress_lock:
+            if (
+                not self._phase_active
+                or self._stop.is_set()
+                or self._phase != expected_phase
+                or self._episode != expected_episode
+            ):
+                raise SessionStateError("Recording phase or episode has changed")
+
+            if action not in allowed_actions.get(self._phase, ()):
+                raise SessionStateError("Command is not allowed in this phase")
+
+            if self._advance.is_set():
+                raise SessionStateError("A recording command is still pending")
+
+            command_id = uuid4().hex
+            self._advance.set()
+            return command_id
 
     def request_stop(self) -> None:
-        self._stop.set()
+        with self._progress_lock:
+            self._stop.set()
+            self._advance.set()
 
     def wait(self) -> int:
         with self._wait_lock:
@@ -125,6 +173,9 @@ class FakeRecordingProcess:
             ):
                 break
 
+            if index < count - 1:
+                self._stage("resetting", float(self._args["dataset.reset_time_s"]))
+
             self._stage("saving")
             episode = {
                 "episode_index": len(episodes),
@@ -137,9 +188,7 @@ class FakeRecordingProcess:
             self._write_info(info_path, len(episodes))
             with self._progress_lock:
                 self._saved += 1
-            if index < count - 1 and not self._stage(
-                "resetting", float(self._args["dataset.reset_time_s"])
-            ):
+            if self._stop.is_set():
                 break
 
     @staticmethod

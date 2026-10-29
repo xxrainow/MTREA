@@ -78,6 +78,68 @@ class CollectionService:
                 raise FileNotFoundError("Recording preview is inactive")
         return recording.frame(name)
 
+    def send_command(
+        self,
+        action: str,
+        *,
+        recording_id: str,
+        expected_phase: str,
+        expected_episode: int,
+    ) -> str:
+        allowed_actions = {
+            "preparing": ("start_episode",),
+            "recording": (
+                "finish_episode",
+                "retry_episode",
+            ),
+            "resetting": ("start_episode",),
+        }
+
+        with self._lock:
+            recording = self._recording
+
+            if (
+                recording is None
+                or self._status.phase != CollectionPhase.RECORDING
+                or self._status.stop_requested
+            ):
+                raise SessionStateError(
+                    "Recording is not accepting commands"
+                )
+
+            if (
+                getattr(recording, "recording_id", None)
+                != recording_id
+            ):
+                raise SessionStateError(
+                    "Recording has changed"
+                )
+
+            status = self._snapshot_locked()
+
+            if (
+                status.episode_phase != expected_phase
+                or status.current_episode != expected_episode
+            ):
+                raise SessionStateError(
+                    "Recording phase or episode has changed"
+                )
+
+            if action not in allowed_actions.get(
+                expected_phase, ()
+            ):
+                raise SessionStateError(
+                    "Command is not allowed in this phase"
+                )
+
+            return recording.send_command(
+                action,
+                expected_phase=expected_phase,
+                expected_episode=(
+                    expected_episode - self._recorded_before
+                ),
+            )
+
     def result(self) -> RecordingResult | None:
         with self._lock:
             return self._result

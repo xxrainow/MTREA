@@ -7,7 +7,9 @@ type Props = {
   status: CollectionStatus | null;
   receivedAt: number;
   active: boolean;
-  pending: 'start' | 'stop' | null;
+  pending: 'start' | 'stop' | 'advance' | null;
+  advancePending: boolean;
+  onAdvance: () => void;
   unavailable: boolean;
   error: string;
   onStop: () => void;
@@ -43,7 +45,18 @@ function SimulatedCamera({ name, index }: { name: string; index: number }) {
   );
 }
 
-export default function RecordingView({ status, receivedAt, active, pending, unavailable, error, onStop, onBack }: Props) {
+export default function RecordingView({
+  status,
+  receivedAt,
+  active,
+  pending,
+  unavailable,
+  error,
+  onStop,
+  onBack,
+  advancePending,
+  onAdvance,
+}: Props) {
   const [now, setNow] = useState(() => performance.now());
 
   useEffect(() => {
@@ -52,7 +65,12 @@ export default function RecordingView({ status, receivedAt, active, pending, una
     return () => window.clearInterval(timer);
   }, [active]);
 
-  const timed = active && !unavailable && pending === null && status?.phase === 'recording';
+  const timed =
+    active &&
+    !unavailable &&
+    pending !== 'start' &&
+    pending !== 'stop' &&
+    status?.phase === 'recording';
   const duration = timed ? status?.phase_duration_s ?? null : null;
   const extra = timed ? Math.max(0, now - receivedAt) / 1000 : 0;
   const elapsed = Math.min(duration ?? 0, (status?.phase_elapsed_s ?? 0) + extra);
@@ -78,6 +96,21 @@ export default function RecordingView({ status, receivedAt, active, pending, una
       : stage === 'connecting' ? 'CONNECTING TO HARDWARE'
       : 'RECORDING PROCESS ACTIVE';
   }
+
+  const canAdvance =
+    active &&
+    !unavailable &&
+    status?.phase === 'recording' &&
+    !status.stop_requested &&
+    (stage === 'preparing' ||
+      stage === 'recording' ||
+      stage === 'resetting');
+
+  const advanceLabel = stage === 'recording'
+    ? 'End episode'
+    : stage === 'resetting'
+      ? 'Start next episode'
+      : 'Start now';
 
   const tone = failed ? 'error' : finished ? 'complete' : stage;
 
@@ -117,10 +150,22 @@ export default function RecordingView({ status, receivedAt, active, pending, una
         {status?.preview_error && <p className="recording-error" role="alert">Preview: {status.preview_error}</p>}
 
         {(error || status?.error) && <p className="recording-error" role="alert">{error || status?.error}</p>}
+        {canAdvance && (
+          <button
+            type="button"
+            className="recording-advance"
+            onClick={onAdvance}
+            disabled={pending !== null || advancePending}
+          >
+            {pending === 'advance' || advancePending
+              ? 'Waiting for recorder…'
+              : advanceLabel}
+          </button>
+        )}
         {busy ? (
           <button type="button" className="recording-stop" onClick={onStop} disabled={pending !== null || status?.phase === 'stopping' || status?.phase === 'verifying'}>{pending === 'stop' || status?.phase === 'stopping' ? 'Stopping and saving…' : 'Stop recording'}</button>
         ) : <button type="button" className="recording-return" onClick={onBack}>Back to collection settings</button>}
-        <p className="recording-hint">{active ? 'Episodes advance automatically. Reset the scene during the orange countdown.' : 'Saved episodes and collection history are preserved.'}</p>
+        <p className="recording-hint">{active ? 'Episodes advance automatically. Use the button to end the current phase early.' : 'Saved episodes and collection history are preserved.'}</p>
       </section>
     </main>
   );

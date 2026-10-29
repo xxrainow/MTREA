@@ -1,5 +1,8 @@
 import json
 from threading import Event, Thread
+from time import monotonic, sleep
+
+from fastapi.testclient import TestClient
 
 from lab.core import collection as collection_module
 from lab.core.collection import CollectionService
@@ -8,6 +11,7 @@ from lab.core.collection_ledger import read_ledger
 from lab.core.fake_recorder import FakeRecordingProcess
 from lab.core.models import CollectionPhase
 from lab.core.recorder import build_record_command
+from lab.server.main import create_app
 
 
 def test_fake_honors_phase_durations_and_does_not_save_twice(tmp_path):
@@ -35,8 +39,8 @@ def test_fake_honors_phase_durations_and_does_not_save_twice(tmp_path):
     assert recording.wait() == 0
     assert recording.wait() == 0
     assert stages == [
-        ("preparing", 0.01), ("recording", 0.02), ("saving", 0.0),
-        ("resetting", 0.03), ("recording", 0.02), ("saving", 0.0),
+        ("preparing", 0.01), ("recording", 0.02), ("resetting", 0.03),
+        ("saving", 0.0), ("recording", 0.02), ("saving", 0.0),
         ("completed", 0.0),
     ]
     progress = recording.progress()
@@ -131,3 +135,77 @@ def test_service_stop_preserves_saved_episode_and_progress(tmp_path, monkeypatch
     assert record["episodes_after"] == 1
     assert record["interrupted"] is True
     assert service._hardware_lock.holder() is None
+
+
+def test_fake_command_api_advances_two_episodes_without_hardware(tmp_path, monkeypatch):
+    monkeypatch.setenv("MTREA_HARDWARE", "fake")
+    monkeypatch.setattr(FakeRecordingProcess, "PREPARATION_SECONDS", 30)
+
+    def hardware_forbidden(*args, **kwargs):
+        raise AssertionError("Fake collection must not open real recording hardware")
+
+    monkeypatch.setattr(collection_module, "build_hardware_args", hardware_forbidden)
+    monkeypatch.setattr(collection_module, "RecordingProcess", hardware_forbidden)
+
+    app = create_app(data_base=tmp_path)
+    body = request()
+    body["sessions"][0].update(episode_time_s=30, reset_time_s=30)
+
+    with TestClient(app) as client:
+        response = client.post("/api/collection/start", json=body)
+        assert response.status_code == 202, response.text
+
+        def wait_for(phase, episode):
+            deadline = monotonic() + 3
+            while monotonic() < deadline:
+                status = client.get("/api/collection/status").json()
+                if (
+                    status["episode_phase"] == phase
+                    and status["current_episode"] == episode
+                ):
+                    return status
+                assert status["phase"] != "failed", status
+                sleep(0.01)
+            raise AssertionError(f"Never reached {phase}, episode {episode}: {status}")
+
+        def command(status, action, **overrides):
+            return client.post("/api/collection/command", json={
+                "action": action,
+                "recording_id": status["recording_id"],
+                "expected_phase": status["episode_phase"],
+                "expected_episode": status["current_episode"],
+                **overrides,
+            })
+
+        preparing = wait_for("preparing", 1)
+        assert preparing["recording_id"]
+        assert command(preparing, "start_episode", recording_id="old").status_code == 409
+        assert command(preparing, "finish_episode").status_code == 409
+        response = command(preparing, "start_episode")
+        assert response.status_code == 202, response.text
+        assert response.json()["status"] == "queued"
+
+        first = wait_for("recording", 1)
+        assert command(first, "finish_episode", expected_episode=2).status_code == 409
+        assert command(first, "finish_episode").status_code == 202
+
+        resetting = wait_for("resetting", 1)
+        assert resetting["saved_episodes"] == 0
+        assert command(resetting, "start_episode").status_code == 202
+
+        second = wait_for("recording", 2)
+        assert second["saved_episodes"] == 1
+        assert command(second, "finish_episode").status_code == 202
+
+        completed = wait_for("completed", 2)
+        app.state.collection._worker.join(timeout=3)
+        assert not app.state.collection._worker.is_alive()
+        final = client.get("/api/collection/status").json()
+        assert final["phase"] == "finished", final
+        assert completed["saved_episodes"] == final["saved_episodes"] == 2
+        assert command(second, "finish_episode").status_code == 409
+
+    root = tmp_path / "fake/collection/raw/progress_demo"
+    assert json.loads((root / "meta/info.json").read_text())["total_episodes"] == 2
+    assert len((root / "meta/episodes.jsonl").read_text().splitlines()) == 2
+    assert not list(root.rglob("*.mp4"))
