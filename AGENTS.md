@@ -135,6 +135,8 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
 - Stop recording requires confirmation. After an intentional stop, verification permits fewer episodes than requested but still checks exit status and metadata. Valid partial runs use an interrupted ledger status so they remain resumable. The web shows the verified saved count and remaining target in plain language; it never promises that an in-progress take was saved before verification. CLI verification remains strict.
 - Web collection has no seed input or seed metadata in new snapshots/ledger entries: recording does not use randomness. Historical snapshots containing seed remain unchanged and retain their hashes for resuming partial collections. Research plan generation, training and evaluation seed requirements remain separate.
 - Dataset playback resolves v2 episode MP4s or v3 shared MP4s and timestamp bounds from saved metadata. Video responses support byte ranges; only paths inside the selected dataset are served. Each camera plays independently, with an episode-relative timeline. Original recordings are never rewritten for playback.
+- Episode joint charts default to all recorded joints overlaid on a shared value scale. The selector or color legend can isolate one joint with its own scale. Names and values come from the dataset API; units are not assumed to be radians. Charts do not change recordings.
+- Completed collections are not reopened for episode deletion, replacement or additional recording. Partial collections can resume with unchanged settings; retry applies only to the current unsaved take. Whole-dataset deletion remains a separate existing action.
 
 
 ## Ownership
