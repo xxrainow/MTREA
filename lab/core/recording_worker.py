@@ -21,6 +21,7 @@ def read_recording_command(
     *,
     phase: str,
     episode: int,
+    phase_id: str,
 ) -> str | None:
     command_path = root / "command.json"
 
@@ -49,6 +50,9 @@ def read_recording_command(
 
         if payload.get("expected_episode") != episode:
             raise ValueError("Current episode has changed")
+
+        if payload.get("expected_phase_id") != phase_id:
+            raise ValueError("Recording attempt has changed")
 
         allowed_actions = {
             "preparing": (
@@ -89,10 +93,13 @@ def read_recording_command(
 
 
 @contextmanager
-def recording_commands(root, *, phase, episode, events):
+def recording_commands(root, *, phase, episode, events, phase_id=None):
     if root is None:
         yield
         return
+
+    if phase_id is None:
+        raise ValueError("Recording commands require a phase ID")
 
     done = Event()
     errors = []
@@ -107,6 +114,7 @@ def recording_commands(root, *, phase, episode, events):
                     root,
                     phase=phase,
                     episode=episode,
+                    phase_id=phase_id,
                 )
 
                 if action is not None:
@@ -211,6 +219,7 @@ def recording_hooks(
                 phase="preparing",
                 episode=writer.current,
                 events=events,
+                phase_id=writer.phase_id,
             ):
                 original_loop(**preparation)
 
@@ -229,6 +238,7 @@ def recording_hooks(
             phase=phase,
             episode=writer.current,
             events=events,
+            phase_id=writer.phase_id,
         ):
             result = original_loop(*args, **kwargs)
 

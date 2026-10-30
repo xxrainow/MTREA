@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { deleteDataset, loadDataset, loadDatasets } from '../api/datasets';
-import type { DatasetDetail, DatasetSummary } from '../api/datasets';
+import type { DatasetDetail, DatasetReference, DatasetSummary } from '../api/datasets';
 import DatasetEpisodeVideos from '../components/DatasetEpisodeVideos';
 import './DatasetsPage.css';
 import DatasetJointChart from '../components/DatasetJointChart';
 
-function DatasetsPage() {
+type Props = {
+  initialDataset?: DatasetReference | null;
+};
+
+function DatasetsPage({ initialDataset = null }: Props) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
-  const [selected, setSelected] = useState<DatasetSummary | null>(null);
+  const [selected, setSelected] = useState<DatasetReference | null>(initialDataset);
   const [detail, setDetail] = useState<DatasetDetail | null>(null);
   const [episodeIndex, setEpisodeIndex] = useState(0);
   const [revision, setRevision] = useState(0);
@@ -19,6 +23,7 @@ function DatasetsPage() {
   const deleteBusy = useRef(false);
 
   useEffect(() => {
+    if (selected !== null) return;
     const controller = new AbortController();
     loadDatasets(controller.signal)
       .then((next) => {
@@ -37,7 +42,7 @@ function DatasetsPage() {
         }
       });
     return () => controller.abort();
-  }, [revision]);
+  }, [revision, selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -223,8 +228,31 @@ function DatasetsPage() {
     );
   }
 
-  const dataset = detail?.dataset ?? selected;
-  const episode = detail?.episodes[episodeIndex];
+  if (!detail) {
+    return (
+      <main className="datasets-page">
+        <button
+          type="button"
+          className="datasets-back-button"
+          onClick={backToList}
+        >
+          ← Back to datasets
+        </button>
+        <div className="datasets-heading">
+          <h1>{selected.name}</h1>
+          <span className={`datasets-mode is-${selected.backend}`}>
+            {selected.backend.toUpperCase()}
+          </span>
+        </div>
+        {error
+          ? <p className="datasets-error" role="alert">{error}</p>
+          : <p role="status">Loading episode metadata…</p>}
+      </main>
+    );
+  }
+
+  const dataset = detail.dataset;
+  const episode = detail.episodes[episodeIndex];
 
   return (
     <main className="datasets-page">

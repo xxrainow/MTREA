@@ -2,6 +2,9 @@
 .recording-view[data-stage='recording'], .recording-view[data-stage='complete'] { --recording-color: #43db82; }
 .recording-view[data-stage='resetting'] { --recording-color: #ff9b43; }
 .recording-view[data-stage='error'] { --recording-color: #ff817d; }
+.recording-view[data-stage='stopped'] { --recording-color: #ffcf8b; }
+.recording-notice { margin: 16px 0; padding: 16px; border: 1px solid #8d6835; border-radius: 7px; background: #382d20; color: #ffdfad; font-size: 14px; line-height: 1.6; }
+.recording-notice p { margin: 8px 0 0; }
 .recording-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .recording-mode { color: var(--lab-muted); font-size: 12px; letter-spacing: .12em; font-weight: 700; }
 .recording-stage { padding: clamp(18px, 3vw, 40px); background: #101925; color: #e7edf6; border: 1px solid #334255; border-radius: 12px; }
@@ -66,6 +69,38 @@
 }
 
 .recording-advance:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.recording-episode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.recording-episode-actions .recording-advance {
+  flex: 1;
+  min-width: 180px;
+  margin-bottom: 0;
+}
+
+.recording-retry {
+  flex: 1;
+  min-width: 180px;
+  min-height: 52px;
+  padding: 12px 20px;
+  border: 1px solid #8d6835;
+  border-radius: 7px;
+  background: #382d20;
+  color: #ffcf8b;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.recording-retry:disabled {
   opacity: .5;
   cursor: not-allowed;
 }

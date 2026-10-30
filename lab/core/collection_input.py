@@ -64,10 +64,15 @@ def save_collection_input(
         ) as stream:
             stream.write(content)
     except FileExistsError:
-        if config_path.read_bytes() != content.encode("utf-8"):
+        existing = config_path.read_text(encoding="utf-8")
+        previous = json.loads(existing)
+        # Preserve historical snapshot hashes so partial collections can resume.
+        previous.pop("seed", None)
+        if previous != config:
             raise ValueError(
                 "Collection settings changed; use a new dataset name"
             ) from None
+        content = existing
 
     return {
         "config_path": config_path,
@@ -80,7 +85,6 @@ def save_collection_input(
         "session": deepcopy(
             config["sessions"][session_index - 1]
         ),
-        "seed": config["seed"],
     }
 
 def prepare_start_arguments(
@@ -148,7 +152,6 @@ def prepare_start_arguments(
             "git_commit": commit,
             "git_dirty": bool(dirty),
             "lerobot_version": lerobot_version,
-            "seed": saved["seed"],
             "purpose": "pipeline_check",
             "layouts": [
                 {

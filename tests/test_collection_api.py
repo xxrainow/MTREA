@@ -84,7 +84,6 @@ def api(tmp_path, monkeypatch):
 def payload():
     return {
         "dataset": "api_demo",
-        "seed": 20261020,
         "session_index": 1,
         "sessions": [
             {
@@ -118,7 +117,8 @@ def test_start_stops_preview_and_passes_saved_input(api):
 
     config_path = base / "raw" / "api_demo.collection.input.json"
     saved = json.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["seed"] == 20261020
+    assert "seed" not in saved
+    assert "seed" not in arguments["record_context"]
     assert saved["sessions"][0]["num_episodes"] == 2
 
     assert not arguments["dataset_root"].exists()
@@ -166,3 +166,36 @@ def test_invalid_input_does_not_start_collection(api):
     assert not (
         base / "raw" / "api_demo.collection.input.json"
     ).exists()
+
+
+def test_seed_is_no_longer_a_collection_input(api):
+    client, service, cameras, _ = api
+    body = payload()
+    body["seed"] = 42
+    response = client.post("/api/collection/start", json=body)
+    assert response.status_code == 422
+    assert service.calls == []
+    assert cameras.running is True
+
+
+def test_legacy_seed_snapshot_keeps_hash_and_rejects_other_changes(tmp_path):
+    import hashlib
+
+    from lab.core.collection_input import save_collection_input
+
+    body = payload()
+    initial = save_collection_input(body, data_base=tmp_path)
+    path = initial["config_path"]
+    snapshot = json.loads(path.read_text())
+    snapshot["seed"] = 42
+    legacy = json.dumps(snapshot, indent=2) + "\n"
+    path.write_text(legacy)
+
+    resumed = save_collection_input(body, data_base=tmp_path)
+    assert resumed["plan_sha"] == hashlib.sha256(legacy.encode()).hexdigest()
+    assert path.read_text() == legacy
+    assert "seed" not in resumed
+
+    body["sessions"][0]["instruction"] = "Different task."
+    with pytest.raises(ValueError, match="Collection settings changed"):
+        save_collection_input(body, data_base=tmp_path)

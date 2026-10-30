@@ -5,11 +5,12 @@ import {
   sendCollectionCommand,
   startCollection,
   stopCollection,
+  type CollectionCommandInput,
   type CollectionStartInput,
   type CollectionStatus,
 } from '../api/collection';
 
-type Action = 'start' | 'stop' | 'advance';
+type Action = 'start' | 'stop' | 'advance' | 'retry';
 
 function message(error: unknown): string {
   return error instanceof Error
@@ -29,8 +30,8 @@ export function useCollection() {
   const [advancedKey, setAdvancedKey] = useState('');
   const advancedPhase = useRef('');
 
-  const phaseKey = status
-    ? `${status.recording_id}:${status.episode_phase}:${status.current_episode}`
+  const phaseKey = status?.phase_id
+    ? `${status.recording_id}:${status.phase_id}`
     : '';
 
   useEffect(() => {
@@ -102,7 +103,10 @@ export function useCollection() {
     }
   }
 
-  async function advance(): Promise<boolean> {
+  async function sendEpisodeCommand(
+    action: CollectionCommandInput['action'],
+    pendingAction: 'advance' | 'retry',
+  ): Promise<boolean> {
     if (busy.current || advancedPhase.current === phaseKey) {
       return false;
     }
@@ -115,6 +119,7 @@ export function useCollection() {
       status.phase !== 'recording' ||
       status.stop_requested ||
       !status.recording_id ||
+      !status.phase_id ||
       status.current_episode === null ||
       (phase !== 'preparing' &&
         phase !== 'recording' &&
@@ -123,17 +128,23 @@ export function useCollection() {
       return false;
     }
 
+    if (
+      (action === 'start_episode' && phase === 'recording') ||
+      (action !== 'start_episode' && phase !== 'recording')
+    ) {
+      return false;
+    }
+
     busy.current = true;
     version.current += 1;
-    setPending('advance');
+    setPending(pendingAction);
     setActionError('');
 
     try {
       await sendCollectionCommand({
-        action: phase === 'recording'
-          ? 'finish_episode'
-          : 'start_episode',
+        action,
         recording_id: status.recording_id,
+        expected_phase_id: status.phase_id,
         expected_phase: phase,
         expected_episode: status.current_episode,
       });
@@ -168,7 +179,13 @@ export function useCollection() {
     unavailable: status === null || pollError !== '',
     start: (input: CollectionStartInput) =>
       perform('start', () => startCollection(input)),
-    advance,
+    advance: () => sendEpisodeCommand(
+      status?.episode_phase === 'recording'
+        ? 'finish_episode'
+        : 'start_episode',
+      'advance',
+    ),
+    retry: () => sendEpisodeCommand('retry_episode', 'retry'),
     advancePending: phaseKey !== '' && advancedKey === phaseKey,
     stop: () => perform('stop', stopCollection),
   };

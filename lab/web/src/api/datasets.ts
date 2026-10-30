@@ -13,6 +13,8 @@ export type DatasetSummary = {
   issues: string[];
 };
 
+export type DatasetReference = Pick<DatasetSummary, 'backend' | 'name'>;
+
 export type DatasetDetail = {
   dataset: DatasetSummary;
   tasks: string[];
@@ -23,7 +25,7 @@ export function loadDatasets(signal: AbortSignal) {
   return hardwareRequest<DatasetSummary[]>('/api/datasets', { signal });
 }
 
-export function loadDataset(dataset: DatasetSummary, signal: AbortSignal) {
+export function loadDataset(dataset: DatasetReference, signal: AbortSignal) {
   return hardwareRequest<DatasetDetail>(
     `/api/datasets/${dataset.backend}/${encodeURIComponent(dataset.name)}`, { signal },
   );

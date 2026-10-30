@@ -219,6 +219,7 @@ class CollectionStatus:
     total_episodes: int = 0
     saved_episodes: int = 0
     episode_phase: str | None = None
+    phase_id: str | None = None
     phase_elapsed_s: float = 0.0
     phase_duration_s: float | None = None
     session_elapsed_s: float = 0.0
