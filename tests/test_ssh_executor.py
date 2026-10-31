@@ -77,7 +77,9 @@ def test_start_detaches_with_setsid_and_writes_an_exit_file(tmp_path):
     assert "&& setsid" not in command
     assert command.endswith(f"> {logs}/20261031-120000-train-abc123.log 2>&1 < /dev/null & echo $!")
     # The job command runs after remote_prefix(), in repo_dir with the venv on PATH.
-    assert "export PATH=" in command and "bash scripts/train.sh --seed=0; echo $?" in command
+    # In a subshell, so a command that calls `exit` still reaches the exit file.
+    assert "bash -c '( cd " in command
+    assert "export PATH=" in command and "bash scripts/train.sh --seed=0 ); echo $?" in command
     assert "20261031-120000-train-abc123.exit.tmp" in command
 
 
@@ -97,14 +99,17 @@ def test_exit_file_and_lost_process(tmp_path):
     assert executor.exit_code(10, job_id="j1") == 3
     assert not executor.is_running(10, job_id="j1")
     assert executor.exit_code(10, job_id="j1") is None  # container restarted: no exit file
+    # A zombie is not running: ps state, not kill -0.
+    assert "ps -o stat= -p 10 | grep -qv '^Z'" in executor.remote.transport.commands[0]
 
 
 def test_stop_signals_the_process_group(tmp_path):
     transport = Scripted([(0, "")])
     SshExecutor(Remote(make_config(tmp_path), transport)).stop(321, grace_s=2, job_id="j1")
     (command,) = transport.commands
-    assert command.startswith("kill -TERM -- -321 ")
-    assert "kill -0 -- -321" in command and "kill -KILL -- -321" in command
+    assert command.startswith("kill -s TERM -- -321 ")  # the form dash accepts
+    assert "ps -o stat= -g 321 | grep -qv '^Z'" in command and "kill -0" not in command
+    assert "kill -s KILL -- -321" in command
 
 
 def test_unreachable_leaves_status_unchanged(tmp_path):
@@ -225,8 +230,9 @@ def test_real_stop_kills_the_whole_group(posix_runner):
     stopped = posix_runner.stop(job.id)
     assert stopped.status == JobStatus.STOPPED
     time.sleep(0.3)
-    with pytest.raises(ProcessLookupError):
-        os.killpg(job.pid, 0)
+    # Nothing left in the group but, at most, zombies nobody has reaped yet.
+    states = subprocess.run(["ps", "-o", "stat=", "-g", str(job.pid)], capture_output=True, text=True).stdout.split()
+    assert [s for s in states if not s.startswith("Z")] == []
 
 
 @posix_only

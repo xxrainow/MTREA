@@ -50,8 +50,9 @@ class SshExecutor(BaseExecutor):
     def start(self, spec: JobSpec, log_path: Path) -> int:
         log, exit_file = self._files(log_path.stem)
         q = shlex.quote
-        # Written then renamed, so a reader never sees an empty exit file.
-        inner = (f"{self.remote.remote_prefix()} {spec.cmd}; "
+        # The subshell keeps a command that calls `exit` from skipping the
+        # exit file. Written then renamed, so a reader never sees it empty.
+        inner = (f"( {self.remote.remote_prefix()} {spec.cmd} ); "
                  f"echo $? > {q(exit_file)}.tmp && mv -f {q(exit_file)}.tmp {q(exit_file)}")
         # `;`, not `&&`, before the background job: `a && b &` would background
         # a subshell and $! would be its PID instead of the job's.
@@ -70,8 +71,10 @@ class SshExecutor(BaseExecutor):
         """("running" | "exited" | "gone", exit code if exited)."""
         _, exit_file = self._files(job_id)
         q = shlex.quote(exit_file)
+        # Not `kill -0`: a container's PID 1 may never reap orphans, and a
+        # zombie still answers kill -0.
         out = self._run(f"if [ -f {q} ]; then echo exited; cat {q}; "
-                        f"elif kill -0 {int(pid)} 2>/dev/null; then echo running; else echo gone; fi",
+                        f"elif ps -o stat= -p {int(pid)} | grep -qv '^Z'; then echo running; else echo gone; fi",
                         "job status").split()
         if out and out[0] == "exited":
             try:
@@ -91,9 +94,13 @@ class SshExecutor(BaseExecutor):
     def stop(self, pid: int, grace_s: float = STOP_GRACE_S, job_id: str | None = None) -> None:
         group = f"-{int(pid)}"
         ticks = max(1, int(grace_s / 0.5))
-        self._run(f"kill -TERM -- {group} 2>/dev/null || exit 0; "
-                  f"for i in $(seq {ticks}); do kill -0 -- {group} 2>/dev/null || exit 0; sleep 0.5; done; "
-                  f"kill -KILL -- {group} 2>/dev/null; exit 0",
+        # Zombies do not count as alive. `ps -g` selects by session; setsid
+        # made the session id equal to the group id.
+        alive = f"ps -o stat= -g {int(pid)} | grep -qv '^Z'"
+        # `kill -s SIG --`: dash (sh on Debian/Ubuntu) rejects `kill -TERM -- -pgid`.
+        self._run(f"kill -s TERM -- {group} 2>/dev/null || exit 0; "
+                  f"for i in $(seq {ticks}); do {alive} || exit 0; sleep 0.5; done; "
+                  f"kill -s KILL -- {group} 2>/dev/null; exit 0",
                   "stop job", timeout=grace_s + 30)
 
     def read_log(self, job_id: str, log_path: Path, tail_lines: int | None = None) -> str:
