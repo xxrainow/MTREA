@@ -64,3 +64,6 @@ Concrete rule, per held-out task family:
 - Vary object identity/color across the 30 trials following the same **Object
   diversity** rule above, so the success rate reflects the task's motion pattern
   rather than one object instance.
+- **Evaluate the last checkpoint for every method.** Never select checkpoints
+  by held-out success; that would tune on the measurement target. Intermediate
+  checkpoints kept with `--keep-checkpoints` are for analysis only.

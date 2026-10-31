@@ -75,10 +75,15 @@ def read_jsonl(path: Path) -> list[dict]:
 
 # --- log-line regex ---
 
+EXTRAS = {"update_s": 0.800, "data_s": 0.004, "samples_per_s": 1.0, "mem_gb": 21.33}
+
+
 @pytest.mark.parametrize("line,expected", [
-    (LOG_500, {"step": "500", "loss": 0.812, "lr": 2.5e-05}),
-    (LOG_1500, {"step": "2K", "loss": 0.501, "lr": 5.0e-05}),
-    ("\rTraining:  50%|#####     | 1/2 [00:01<00:01]" + LOG_1K, {"step": "1K", "loss": 0.640, "lr": 5.0e-05}),
+    (LOG_500, {"step": "500", "loss": 0.812, "lr": 2.5e-05, "epoch": 0.04, "grad_norm": 3.210,
+               **EXTRAS, "update_s": 0.812}),
+    (LOG_1500, {"step": "2K", "loss": 0.501, "lr": 5.0e-05, "epoch": 0.13, "grad_norm": 1.900, **EXTRAS}),
+    ("\rTraining:  50%|#####     | 1/2 [00:01<00:01]" + LOG_1K,
+     {"step": "1K", "loss": 0.640, "lr": 5.0e-05, "epoch": 0.08, "grad_norm": 2.100, **EXTRAS}),
 ])
 def test_parse_metrics_line_matches(line, expected):
     assert parse_metrics_line(line) == expected
@@ -208,7 +213,7 @@ def test_existing_nonempty_output_is_refused_and_untouched(tmp_path, capsys):
 def test_methods_map_to_expected_policy_flags(tmp_path, capsys, method, expert_only):
     assert main(base_args(tmp_path, write_stub(tmp_path), method=method)) == 0
     received = json.loads((tmp_path / "stub_argv.json").read_text(encoding="utf-8"))
-    for key, value in METHODS[method].items():
+    for key, value in METHODS[method].flags.items():
         assert f"--{key}={value}" in received
     assert f"--policy.train_expert_only={expert_only}" in received
     assert "--policy.freeze_vision_encoder=false" in received
@@ -254,8 +259,9 @@ def test_successful_run_writes_bookkeeping(tmp_path, capsys):
     config = json.loads((run / "config.json").read_text(encoding="utf-8"))
     assert config["args"]["seed"] == 0
     assert config["args"]["lr"] == 2.5e-5 and config["args"]["batch_size"] == 16
-    assert config["method_flags"] == METHODS["h0"]
-    assert config["lerobot_argv"][-1] == "--wandb.enable=false"
+    assert config["method_flags"] == METHODS["h0"].flags
+    assert config["fake"] is False
+    assert "--wandb.enable=false" in config["lerobot_argv"]
     for key in ("git_commit", "git_dirty", "lerobot_version", "python_version", "hostname", "start_time"):
         assert key in config
 
