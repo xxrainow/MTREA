@@ -73,7 +73,7 @@ def test_fake_collection_appears_in_catalog_and_detail(tmp_path, monkeypatch):
     with TestClient(app) as client:
         assert client.get("/api/datasets").json() == []
         started = client.post("/api/collection/start", json={
-            "dataset": "web_demo", "seed": 7, "session_index": 1,
+            "dataset": "web_demo", "session_index": 1,
             "sessions": [{"instruction": "Move the block.", "num_episodes": 2,
                           "episode_time_s": 0.01, "reset_time_s": 0.01}],
         })
