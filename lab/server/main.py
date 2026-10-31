@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, HTTPException, Query
 
 from lab.core import paths
 from lab.core.executors.local import LocalExecutor
+from lab.core.executors.ssh import SshExecutor
 from lab.core.hardware.service import HardwareService
 from lab.core.models import Executor
 from lab.core.runner import Runner
@@ -17,6 +18,8 @@ from lab.core.collection import CollectionService
 from lab.server import collection_api
 from lab.server import datasets_api
 from lab.server import remote_api
+from lab.server import train_api
+from lab.core.remote import RemoteError, RemoteNotConfigured, load_remote
 
 
 def create_app(
@@ -33,10 +36,15 @@ def create_app(
 
         store = JobStore(paths.jobs_ledger(resolved_data))
         local_executor = LocalExecutor(repo_root=repo_root)
+        executors = {Executor.LOCAL: local_executor}
+        try:
+            executors[Executor.SSH] = SshExecutor(load_remote(remote_config, remote_transport))
+        except RemoteNotConfigured:
+            pass  # ssh jobs show "executor unavailable" until remote.yaml exists
 
         app.state.runner = Runner(
             store=store,
-            executors={Executor.LOCAL: local_executor},
+            executors=executors,
             data_base=resolved_data,
             repo_root=repo_root,
         )
@@ -52,6 +60,8 @@ def create_app(
         app.state.remote_config = remote_config
         app.state.remote_transport = remote_transport
         app.state.remote_cache = remote_api.TtlCache()
+        app.state.repo_root = repo_root
+        app.state.train_runs_cache = train_api.runs_cache()
 
         try:
             yield
@@ -89,6 +99,7 @@ def create_app(
     application.include_router(collection_api.router)
     application.include_router(datasets_api.router)
     application.include_router(remote_api.router)
+    application.include_router(train_api.router)
 
     return application
 
@@ -161,7 +172,13 @@ def stop_job(job_id: str, request: Request) -> dict:
                     detail="Executor unavailable for this job",
                 )
 
-        stopped_job = runner.stop(job_id)
+        try:
+            stopped_job = runner.stop(job_id)
+        except RemoteError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"GPU host unreachable; the job may still be running: {e}",
+            ) from None
 
         return stopped_job.to_dict()
 

@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from 'react';
+import { useState } from 'react';
 import AppLayout from './components/AppLayout';
 import type { PageName } from './components/AppLayout';
 import JobsPage from './pages/JobsPage';
@@ -10,26 +10,20 @@ import DatasetsPage from './pages/DatasetsPage';
 import TrainPage from './pages/TrainPage';
 import RunPage from './pages/RunPage';
 import CheckpointPage from './pages/CheckpointPage';
-import { initialTrainingState, trainingReducer } from './training/model';
+import { initialForm } from './training/model';
+import type { TrainingForm } from './training/model';
 import type { DatasetReference } from './api/datasets';
 
 function App() {
   const [activePage, setActivePage] = useState<PageName>('Overview');
   const [collectBusy, setCollectBusy] = useState(false);
   const [datasetToOpen, setDatasetToOpen] = useState<DatasetReference | null>(null);
-  const [training, dispatchTraining] = useReducer(trainingReducer, initialTrainingState);
+  // Train's draft settings and the run it shows survive menu navigation; the
+  // run itself lives on the backend, so a reload finds it again.
+  const [trainForm, setTrainForm] = useState<TrainingForm>(initialForm);
+  const [trainJobId, setTrainJobId] = useState<string | null>(null);
   const [checkpointToOpen, setCheckpointToOpen] = useState<string | null>(null);
   const [jobToOpen, setJobToOpen] = useState<string | null>(null);
-
-  useEffect(() => {
-    const run = training.run;
-    if (run?.status !== 'running') return;
-    const timer = window.setInterval(() => {
-      dispatchTraining({ type: 'tick' });
-
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [training.run]);
 
   function openCheckpoint(id: string | null) {
     setCheckpointToOpen(id);
@@ -75,13 +69,20 @@ function App() {
           onOpenJob={openJob}
         />
       ) : activePage === 'Train' ? (
-        <TrainPage state={training} dispatch={dispatchTraining} onOpenCheckpoint={openCheckpoint} />
+        <TrainPage
+          form={trainForm}
+          setForm={setTrainForm}
+          jobId={trainJobId}
+          onJobChange={setTrainJobId}
+          onOpenCheckpoint={openCheckpoint}
+          onOpenDatasets={() => navigate('Datasets')}
+        />
       ) : activePage === 'Checkpoint' ? (
-        <CheckpointPage runs={training.runs} checkpoints={training.checkpoints} selectedId={checkpointToOpen} onSelect={openCheckpoint} />
+        <CheckpointPage selectedId={checkpointToOpen} onSelect={setCheckpointToOpen} />
       ) : activePage === 'Run & Evaluate' ? (
         <RunPage />
       ) : activePage === 'Jobs' ? (
-        <JobsPage key={jobToOpen ?? 'all'} initialJobId={jobToOpen} trainingRuns={training.runs} />
+        <JobsPage key={jobToOpen ?? 'all'} initialJobId={jobToOpen} />
       ) : (
         <section>
           <h1>{activePage}</h1>

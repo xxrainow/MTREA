@@ -6,5 +6,6 @@ start → poll → stop. Nothing about the command changes between them.
 
 from lab.core.executors.base import BaseExecutor
 from lab.core.executors.local import LocalExecutor
+from lab.core.executors.ssh import SshExecutor
 
-__all__ = ["BaseExecutor", "LocalExecutor"]
+__all__ = ["BaseExecutor", "LocalExecutor", "SshExecutor"]

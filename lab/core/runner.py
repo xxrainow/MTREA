@@ -13,8 +13,9 @@ from datetime import datetime
 from pathlib import Path
 
 from lab.core import paths
-from lab.core.executors.base import BaseExecutor
+from lab.core.executors.base import BaseExecutor, read_local_log
 from lab.core.models import Executor, Job, JobKind, JobSpec, JobStatus
+from lab.core.remote import RemoteError
 from lab.core.store import JobStore
 
 
@@ -78,10 +79,17 @@ class Runner:
             
             # If it is running and has a PID, check whether it is actually running
             executor = self.executors.get(job.spec.executor)
-            if executor is None or executor.is_running(job.pid):
+            if executor is None:
                 continue
-            
-            job.exit_code = executor.exit_code(job.pid)
+            try:
+                if executor.is_running(job.pid, job_id=job.id):
+                    continue
+                job.exit_code = executor.exit_code(job.pid, job_id=job.id)
+            except RemoteError as e:
+                # The GPU host did not answer: no evidence either way, so the
+                # status stays as recorded. Shown to the UI, never persisted.
+                job.unreachable = str(e)
+                continue
             
             if job.exit_code is None:
                 # Confirmed is_running = False; but don't know the exit_code
@@ -102,8 +110,8 @@ class Runner:
         return [j for j in self.store.list() if j.is_active()]
 
     def get(self, job_id: str) -> Job | None:
-        self.refresh()
-        return self.store.get(job_id)
+        # The refreshed object, not a reload: it carries `unreachable`.
+        return next((job for job in self.refresh() if job.id == job_id), None)
 
     # --- stop ---
 
@@ -112,7 +120,7 @@ class Runner:
         if job is None:
             raise KeyError(job_id)
         if job.status == JobStatus.RUNNING and job.pid is not None:
-            self.executors[job.spec.executor].stop(job.pid) # stop process by executor
+            self.executors[job.spec.executor].stop(job.pid, job_id=job.id) # stop process by executor
             job.status = JobStatus.STOPPED
             job.finished_at = datetime.now()
             self.store.save(job) # Record the changed job status in the jobs.jsonl file
@@ -122,12 +130,13 @@ class Runner:
 
     def read_log(self, job_id: str, tail_lines: int | None = None) -> str:
         job = self.store.get(job_id)
-        if job is None or not job.log_path or not Path(job.log_path).exists():
+        if job is None or not job.log_path:
             return ""
-        text = Path(job.log_path).read_text(encoding="utf-8", errors="replace")
-        if tail_lines is None:
-            return text
-        return "\n".join(text.splitlines()[-tail_lines:])
+        executor = self.executors.get(job.spec.executor)
+        if executor is None:
+            # No executor (e.g. ssh without remote.yaml): whatever copy is here.
+            return read_local_log(Path(job.log_path), tail_lines)
+        return executor.read_log(job_id, Path(job.log_path), tail_lines)
 
     @staticmethod
     def _new_id(spec: JobSpec) -> str:

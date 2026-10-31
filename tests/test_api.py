@@ -5,7 +5,9 @@ from lab.core import paths
 from lab.core.models import Executor, Job, JobKind, JobSpec, JobStatus
 from lab.core.store import JobStore
 
+import os
 import shlex
+import subprocess
 import sys
 import time
 
@@ -115,12 +117,12 @@ def test_stop_running_job(tmp_path):
             "print('ready', flush=True); "
             "time.sleep(60)"
         )
-        command = "exec " + shlex.join([
-            sys.executable,
-            "-u",
-            "-c",
-            code,
-        ])
+        argv = [sys.executable, "-u", "-c", code]
+        # cmd.exe has no exec; LocalExecutor stops the whole tree there.
+        command = (
+            subprocess.list2cmdline(argv) if os.name == "nt"
+            else "exec " + shlex.join(argv)
+        )
 
         job = runner.submit(
             JobSpec(

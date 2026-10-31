@@ -87,6 +87,11 @@ def run_dir(run_id: str, base: Path | None = None) -> Path:
     return runs_dir(base) / run_id
 
 
+def fake_runs_dir(base: Path | None = None) -> Path:
+    """Fake training runs on this machine; real runs live on the GPU host."""
+    return root(base) / "fake" / "runs"
+
+
 def dataset_dir(name: str, base: Path | None = None) -> Path:
     return datasets_dir(base) / name
 

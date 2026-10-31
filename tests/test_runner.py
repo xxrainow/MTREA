@@ -1,7 +1,7 @@
 """Runner + LocalExecutor + JobStore against throwaway shell commands.
 
-No robot, no GPU, no research scripts: `sleep` and `echo` stand in for
-train.sh. What is checked is the contract the UI will rely on — submit
+No robot, no GPU, no research scripts: short python processes stand in for
+train.sh, quoted for the platform shell (cmd.exe on Windows, sh elsewhere). What is checked is the contract the UI will rely on — submit
 returns a running job, refresh notices completion, logs are captured,
 stop kills the process, exclusive kinds do not overlap, and the ledger
 survives a "server restart" (a fresh Runner over the same file).
@@ -9,6 +9,10 @@ survives a "server restart" (a fresh Runner over the same file).
 
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -33,6 +37,14 @@ def runner(tmp_path: Path) -> Runner:
     )
 
 
+def py(code: str) -> str:
+    argv = [sys.executable, "-c", code]
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+
+
+SLEEP = py("import time; time.sleep(30)")
+
+
 def _wait(runner: Runner, job_id: str, timeout_s: float = 5.0) -> JobStatus:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -45,7 +57,7 @@ def _wait(runner: Runner, job_id: str, timeout_s: float = 5.0) -> JobStatus:
 
 
 def test_submit_runs_and_captures_log(runner: Runner) -> None:
-    job = runner.submit(JobSpec(kind=JobKind.CONVERT, cmd="echo hello; echo world >&2"))
+    job = runner.submit(JobSpec(kind=JobKind.CONVERT, cmd=py("import sys; print('hello'); print('world', file=sys.stderr)")))
     assert job.status == JobStatus.RUNNING
     assert job.pid is not None
     assert _wait(runner, job.id) == JobStatus.DONE
@@ -56,13 +68,13 @@ def test_submit_runs_and_captures_log(runner: Runner) -> None:
 
 
 def test_failure_is_recorded(runner: Runner) -> None:
-    job = runner.submit(JobSpec(kind=JobKind.CONVERT, cmd="echo boom; exit 3"))
+    job = runner.submit(JobSpec(kind=JobKind.CONVERT, cmd=py("print('boom'); raise SystemExit(3)")))
     assert _wait(runner, job.id) == JobStatus.FAILED
     assert runner.get(job.id).exit_code == 3
 
 
 def test_stop_kills_running_job(runner: Runner) -> None:
-    job = runner.submit(JobSpec(kind=JobKind.TRAIN, cmd="sleep 30"))
+    job = runner.submit(JobSpec(kind=JobKind.TRAIN, cmd=SLEEP))
     time.sleep(0.2)
     assert runner.get(job.id).status == JobStatus.RUNNING
     stopped = runner.stop(job.id)
@@ -72,11 +84,11 @@ def test_stop_kills_running_job(runner: Runner) -> None:
 
 
 def test_exclusive_kinds_do_not_overlap(runner: Runner) -> None:
-    first = runner.submit(JobSpec(kind=JobKind.TRAIN, cmd="sleep 30", label="first"))
+    first = runner.submit(JobSpec(kind=JobKind.TRAIN, cmd=SLEEP, label="first"))
     with pytest.raises(JobConflict):
-        runner.submit(JobSpec(kind=JobKind.TRAIN, cmd="sleep 30", label="second"))
+        runner.submit(JobSpec(kind=JobKind.TRAIN, cmd=SLEEP, label="second"))
     with pytest.raises(JobConflict):
-        runner.submit(JobSpec(kind=JobKind.NORM_STATS, cmd="sleep 30"))
+        runner.submit(JobSpec(kind=JobKind.NORM_STATS, cmd=SLEEP))
     # a different, non-conflicting kind is fine
     other = runner.submit(JobSpec(kind=JobKind.CONVERT, cmd="echo ok"))
     runner.stop(first.id)
