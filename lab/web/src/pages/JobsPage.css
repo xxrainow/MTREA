@@ -23,6 +23,7 @@
 }
 
 .jobs-panel {
+  margin-bottom: 20px;
   min-width: 0;
   padding: 20px;
   border: 1px solid var(--lab-border);
