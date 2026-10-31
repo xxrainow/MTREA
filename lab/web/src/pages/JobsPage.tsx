@@ -23,14 +23,19 @@ const statusLabels: Record<string, string> = {
   unknown: 'Unknown',
 };
 
-function JobsPage({ trainingRuns = [] }: { trainingRuns?: TrainingRun[] }) {
+type Props = {
+  trainingRuns?: TrainingRun[];
+  initialJobId?: string | null;
+};
+
+function JobsPage({ trainingRuns = [], initialJobId = null }: Props) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
 
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(initialJobId);
   const [logContent, setLogContent] = useState('');
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);

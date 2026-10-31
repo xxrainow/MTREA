@@ -134,6 +134,18 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
   Vite proxies `/api` and `/ws` (WebSocket) to the backend. Joint order comes
   from `robot/config.py` through `/api/hardware/config`, never a web constant.
 - Never commit anything under `data/`, `.env`, or calibration files.
+- `lab/core/remote.py` is the only place that builds ssh, rsync or tar-over-ssh
+  command lines, from `robot/configs/remote.yaml`. The SSH job executor must use
+  it and run every command as `remote_prefix()` + the command, so it starts in
+  repo_dir with the configured venv on PATH. Remote values are shlex-quoted
+  there; dataset names pass `validate_dataset_name` first.
+- Datasets on the GPU host (`<data_dir>/datasets/<name>`) are immutable and
+  identified by content fingerprint (`lab/core/dataset_manifest.py`), recorded
+  in `<name>.manifest.json` beside the copy. A sync is verified on the host
+  before it is moved out of `.incoming/`. A different dataset under an existing
+  name is refused, never overwritten: a changed dataset gets a new name. Only
+  `data/datasets/<name>`, or `data/raw/<name>` with q01/q99 stats, is sendable;
+  fake datasets never are.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.
 - Devices and Collect share the backend camera preview service. Page changes do not stop preview. A camera frame-read failure stops all preview cameras and exposes an error in status; reconnecting requires an explicit start.
@@ -147,7 +159,7 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
 - Episode joint charts default to all recorded joints overlaid on a shared value scale. The selector or color legend can isolate one joint with its own scale. Names and values come from the dataset API; units are not assumed to be radians. Charts do not change recordings.
 - Completed collections are not reopened for episode deletion, replacement or additional recording. Partial collections can resume with unchanged settings; retry applies only to the current unsaved take. Whole-dataset deletion remains a separate existing action.
 
-- Train and Checkpoint are separate sidebar pages. Train uses setup -> progress -> completed monitor, with optional checkpoint detail/list navigation, with Start training at the top right. Current web training is explicitly an in-memory simulation: no SSH/local training process, dataset transfer, or model file is created. App-level reducer state survives menu navigation but not reload. App-owned simulation ticks update loss/LR charts and bounded logs while navigating other pages. Checkpoints follow save intervals. Completion keeps the monitor at 100% with final graphs/logs and View final checkpoint / New training setup actions. Menu navigation preserves this completed monitor; only New training setup clears the selected run. Sidebar Checkpoint opens a master-detail browser: training runs on the left, only the selected run’s checkpoints on the right, sorted by descending step. Run identity is the run ID, not its display name. Details retain the run list; returning to the list retains the selected run. Run status comes from live run history, including runs without snapshots. Jobs shows simulated run history separately from real backend jobs; no simulated run is submitted to the backend. Input changes invalidate validation, disconnected runs remain active, and stopping preserves existing snapshots. Real SSH execution, remote validation, durable jobs and checkpoint discovery remain unimplemented. H0 is full fine-tuning; default steps 10000, batch 16, LR 2.5e-5, and Seed requires explicit input.
+- Train and Checkpoint are separate sidebar pages. Train uses setup -> progress -> completed monitor, with optional checkpoint detail/list navigation, with Start training at the top right. Current web training is explicitly an in-memory simulation: the Train page simulation submits no SSH/local training process, transfers no dataset, and creates no model file. App-level reducer state survives menu navigation but not reload. App-owned simulation ticks update loss/LR charts and bounded logs while navigating other pages. Checkpoints follow save intervals. Completion keeps the monitor at 100% with final graphs/logs and View final checkpoint / New training setup actions. Menu navigation preserves this completed monitor; only New training setup clears the selected run. Sidebar Checkpoint opens a master-detail browser: training runs on the left, only the selected run’s checkpoints on the right, sorted by descending step. Run identity is the run ID, not its display name. Details retain the run list; returning to the list retains the selected run. Run status comes from live run history, including runs without snapshots. Jobs shows simulated run history separately from real backend jobs; no simulated run is submitted to the backend. Input changes invalidate validation, disconnected runs remain active, and stopping preserves existing snapshots. Real SSH execution, remote validation, durable jobs and checkpoint discovery remain unimplemented. H0 is full fine-tuning; default steps 10000, batch 16, LR 2.5e-5, and Seed requires explicit input.
 
 
 ## Ownership

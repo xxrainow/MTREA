@@ -13,6 +13,7 @@ arguments (they never import lab). Same layout on both machines.
       jobs/        runner ledger (jobs.jsonl)
       logs/        captured stdout/stderr, one file per job
       locks/       hardware.lock: which process holds the SO-101 arms
+      cache/       derived, rebuildable data, e.g. manifests/ (dataset fingerprints)
 """
 
 from __future__ import annotations
@@ -97,6 +98,11 @@ def ensure_dirs(base: Path | None = None) -> Path:
     for sub in SUBDIRS:
         (r / sub).mkdir(parents=True, exist_ok=True)
     return r
+
+
+def manifest_cache(backend: str, name: str, base: Path | None = None) -> Path:
+    """Cached dataset manifest; see lab/core/dataset_manifest.py."""
+    return root(base) / "cache" / "manifests" / f"{backend}_{name}.json"
 
 
 def dataset_trash_dir(base: Path | None = None) -> Path:

@@ -7,6 +7,10 @@ from lab.core.dataset_joints import read_episode_joints
 from lab.core.datasets import dataset_root
 from lab.core.dataset_delete import archive_dataset
 from lab.core.hardware import HardwareBusy
+from lab.core.dataset_sync import remote_state, sendability, sync_command
+from lab.core.models import JobKind, JobSpec
+from lab.core.runner import JobConflict
+from lab.server.remote_api import get_remote
 
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -126,3 +130,42 @@ def delete_dataset(
             status_code=503,
             detail=f"Cannot archive dataset: {exc}",
         ) from None
+
+
+def _existing_dataset(backend: Backend, name: str, request: Request) -> None:
+    try:
+        dataset_root(backend, name, request.app.state.data_base)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="Dataset not found") from None
+
+
+@router.get("/{backend}/{name}/remote")
+def dataset_remote(backend: Backend, name: str, request: Request) -> dict:
+    """Whether the GPU host holds this dataset, and where. remote_path is what training uses."""
+    _existing_dataset(backend, name, request)
+    remote, why = get_remote(request)
+    return remote_state(remote, backend, name, request.app.state.data_base, not_configured=why)
+
+
+@router.post("/{backend}/{name}/sync")
+def dataset_sync(backend: Backend, name: str, request: Request) -> dict:
+    _existing_dataset(backend, name, request)
+    state = request.app.state
+    send = sendability(backend, name, state.data_base)
+    if not send.sendable:
+        raise HTTPException(status_code=409, detail=f"Not sendable: {send.reason}")
+    remote, why = get_remote(request)
+    if remote is None:
+        raise HTTPException(status_code=409, detail=f"GPU host not configured: {why}")
+    spec = JobSpec(
+        kind=JobKind.SYNC,
+        cmd=sync_command(name, state.data_base, state.remote_config, state.remote_transport),
+        label=f"sync {name}",
+    )
+    with state.runner_lock:
+        try:
+            job = state.runner.submit(spec)
+        except JobConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+    state.remote_cache.clear()
+    return job.to_dict()

@@ -19,6 +19,7 @@ function App() {
   const [datasetToOpen, setDatasetToOpen] = useState<DatasetReference | null>(null);
   const [training, dispatchTraining] = useReducer(trainingReducer, initialTrainingState);
   const [checkpointToOpen, setCheckpointToOpen] = useState<string | null>(null);
+  const [jobToOpen, setJobToOpen] = useState<string | null>(null);
 
   useEffect(() => {
     const run = training.run;
@@ -43,7 +44,13 @@ function App() {
 
     setCheckpointToOpen(null);
     setDatasetToOpen(null);
+    setJobToOpen(null);
     setActivePage(page);
+  }
+
+  function openJob(jobId: string) {
+    setJobToOpen(jobId);
+    setActivePage('Jobs');
   }
 
   function openDataset(dataset: DatasetReference) {
@@ -65,6 +72,7 @@ function App() {
         <DatasetsPage
           key={datasetToOpen ? `${datasetToOpen.backend}:${datasetToOpen.name}` : 'list'}
           initialDataset={datasetToOpen}
+          onOpenJob={openJob}
         />
       ) : activePage === 'Train' ? (
         <TrainPage state={training} dispatch={dispatchTraining} onOpenCheckpoint={openCheckpoint} />
@@ -73,7 +81,7 @@ function App() {
       ) : activePage === 'Run & Evaluate' ? (
         <RunPage />
       ) : activePage === 'Jobs' ? (
-        <JobsPage trainingRuns={training.runs} />
+        <JobsPage key={jobToOpen ?? 'all'} initialJobId={jobToOpen} trainingRuns={training.runs} />
       ) : (
         <section>
           <h1>{activePage}</h1>

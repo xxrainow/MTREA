@@ -1,6 +1,5 @@
 import hashlib
 import json
-import re
 from copy import deepcopy
 from pathlib import Path
 import subprocess
@@ -8,6 +7,7 @@ from importlib import metadata
 
 from lab.core.hardware import HardwareError
 from lab.core import paths
+from lab.core.datasets import validate_dataset_name
 from lab.core.fake_recorder import fake_collection_enabled
 
 
@@ -20,11 +20,7 @@ def save_collection_input(
     session_index = config.pop("session_index")
     dataset = config["dataset"]
 
-    if not re.fullmatch(
-        r"[A-Za-z0-9_][A-Za-z0-9_.-]*",
-        dataset,
-    ):
-        raise ValueError("Invalid dataset name")
+    validate_dataset_name(dataset)
 
     if not 1 <= session_index <= len(config["sessions"]):
         raise ValueError("Selected session does not exist")

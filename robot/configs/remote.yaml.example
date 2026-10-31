@@ -2,6 +2,7 @@
 # (gitignored) and fill in. Never commit real hosts or usernames.
 host: gpu-server.example.ac.kr
 user: your_id
+# port: 22                         # optional; SSH port
 ssh_key: ~/.ssh/id_ed25519
 repo_dir: /home/your_id/MTREA      # checkout on the GPU host; scripts run from here
 data_dir: /home/your_id/MTREA/data # must follow the same data/ layout as local

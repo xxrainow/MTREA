@@ -594,3 +594,74 @@
 .datasets-joint-legend-item { display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--lab-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .datasets-joint-legend-item:hover, .datasets-joint-legend-item[aria-pressed='true'] { border-color: var(--lab-border); color: var(--lab-text); background: #ffffff08; }
 .datasets-joint-swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+.datasets-remote {
+  margin-bottom: 20px;
+}
+
+.datasets-remote-badge,
+.datasets-remote-marker {
+  display: inline-block;
+  padding: 4px 8px;
+  border: 1px solid var(--lab-border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--lab-muted);
+}
+
+.datasets-remote-badge.is-synced,
+.datasets-remote-marker.is-synced {
+  color: #5fbd90;
+  background: #5fbd9012;
+}
+
+.datasets-remote-badge.is-incoming,
+.datasets-remote-badge.is-different,
+.datasets-remote-marker.is-different {
+  color: #e5ad55;
+  background: #e5ad5512;
+}
+
+.datasets-remote-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.datasets-remote-path code {
+  overflow-wrap: anywhere;
+}
+
+.datasets-remote-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.datasets-remote-progress progress {
+  flex: 1;
+  min-width: 120px;
+}
+
+.datasets-remote-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.datasets-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lab-accent);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
