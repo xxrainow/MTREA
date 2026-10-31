@@ -1,8 +1,9 @@
 """The GPU host over SSH: configuration, command construction, transports.
 
 This is the only module that builds ssh, rsync or tar-over-ssh command lines.
-Everything that touches the GPU host (dataset sync now, the SSH job executor
-later) goes through it, so quoting and connection options live in one place.
+Everything that touches the GPU host (dataset sync, the SSH job executor,
+reading run files back) goes through it, so quoting and connection options
+live in one place.
 
     remote = load_remote()                       # robot/configs/remote.yaml
     remote.ping()                                # (ok, message)
@@ -64,6 +65,19 @@ for path in glob.glob(os.path.join(sys.argv[1], "*.manifest.json")):
     if isinstance(data, dict):
         name = os.path.basename(path)[:-len(".manifest.json")]
         out[name] = {"fingerprint": data.get("fingerprint"), "synced_at": data.get("synced_at")}
+print(json.dumps(out))
+"""
+
+# Reads several small text files in one round trip; run remotely from stdin.
+_READ_TEXTS = b"""
+import json, sys
+out = {}
+for path in sys.argv[1:]:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            out[path] = f.read()
+    except OSError:
+        out[path] = None
 print(json.dumps(out))
 """
 
@@ -166,6 +180,14 @@ class Transport(ABC):
         """File content, or None if it does not exist."""
 
     @abstractmethod
+    def read_from(self, path: str, offset: int) -> Optional[bytes]:
+        """Bytes from `offset` to the end, or None if the file does not exist."""
+
+    @abstractmethod
+    def read_texts(self, paths: Sequence[str]) -> dict[str, Optional[str]]:
+        """read_text of several files in one round trip."""
+
+    @abstractmethod
     def write_text(self, path: str, text: str) -> None:
         """Atomic: temp file, then rename."""
 
@@ -248,6 +270,20 @@ class SshTransport(Transport):
         if cp.returncode == 3:
             return None
         return self._check(cp, f"read {path}").stdout.decode("utf-8")
+
+    def read_from(self, path, offset):
+        q = shlex.quote(path)
+        cp = self.run(f"if [ -f {q} ]; then tail -c +{int(offset) + 1} {q}; else exit 3; fi")
+        if cp.returncode == 3:
+            return None
+        return self._check(cp, f"read {path}").stdout
+
+    def read_texts(self, paths):
+        if not paths:
+            return {}
+        cp = self._check(self.run(f"{shlex.quote(self.config.python)} - {shlex.join(paths)}",
+                                  input=_READ_TEXTS), "read files")
+        return _json_object(cp.stdout, "read files")
 
     def write_text(self, path, text):
         q = shlex.quote(path)
@@ -410,6 +446,17 @@ class LocalTransport(Transport):
         p = Path(path)
         return p.read_text(encoding="utf-8") if p.is_file() else None
 
+    def read_from(self, path, offset):
+        p = Path(path)
+        if not p.is_file():
+            return None
+        with p.open("rb") as f:
+            f.seek(offset)
+            return f.read()
+
+    def read_texts(self, paths):
+        return {path: self.read_text(path) for path in paths}
+
     def write_text(self, path, text):
         p = Path(path)
         tmp = p.with_name(f"{p.name}.tmp.{os.getpid()}")
@@ -528,6 +575,12 @@ class Remote:
 
     def remote_manifest_path(self, name: str) -> str:
         return self.remote_dataset_root(name) + MANIFEST_SUFFIX
+
+    def remote_runs_dir(self) -> str:
+        return posixpath.join(self.config.data_dir, "runs")
+
+    def remote_logs_dir(self) -> str:
+        return posixpath.join(self.config.data_dir, "logs")
 
 
 def load_remote(config_path: Optional[Path] = None, transport: str = "ssh") -> Remote:

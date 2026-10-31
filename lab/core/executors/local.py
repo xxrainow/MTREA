@@ -26,6 +26,11 @@ class LocalExecutor(BaseExecutor):
         log_path.parent.mkdir(parents=True, exist_ok=True)
         cwd = Path(spec.cwd) if spec.cwd else self.repo_root
         log = log_path.open("ab")
+        if os.name == "nt":
+            # Own process group, so a Ctrl+C in the server console doesn't reach it.
+            group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        else:
+            group = {"start_new_session": True}  # own process group: our SIGINT doesn't reach it
         proc = subprocess.Popen(
             spec.cmd,
             shell=True,
@@ -33,13 +38,13 @@ class LocalExecutor(BaseExecutor):
             stdout=log,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            start_new_session=True,  # own process group: our SIGINT doesn't reach it
+            **group,
         )
         log.close()  # child holds its own fd
         self._procs[proc.pid] = proc
         return proc.pid
 
-    def is_running(self, pid: int) -> bool:
+    def is_running(self, pid: int, job_id: str | None = None) -> bool:
         proc = self._procs.get(pid)
 
         # If there is a Popen object in this runner
@@ -58,11 +63,14 @@ class LocalExecutor(BaseExecutor):
         except psutil.AccessDenied:
             return True
 
-    def exit_code(self, pid: int) -> int | None:
+    def exit_code(self, pid: int, job_id: str | None = None) -> int | None:
         proc = self._procs.get(pid)
         return proc.returncode if proc is not None else None
 
-    def stop(self, pid: int, grace_s: float = 5.0) -> None:
+    def stop(self, pid: int, grace_s: float = 5.0, job_id: str | None = None) -> None:
+        if os.name == "nt":
+            self._stop_windows(pid, grace_s)
+            return
         # Signal the whole group so `bash -c "python train.py"` takes python
         # down with it, not just the bash wrapper.
         try:
@@ -81,3 +89,25 @@ class LocalExecutor(BaseExecutor):
         proc = self._procs.get(pid)
         if proc is not None:
             proc.wait(timeout=2)
+
+    def _stop_windows(self, pid: int, grace_s: float) -> None:
+        # No process groups to signal: taskkill /T walks the tree from the
+        # shell. Without /F it asks politely, which a windowless console
+        # process usually refuses, so /F after the grace period is the usual end.
+        if not self.is_running(pid):
+            return
+        _taskkill(pid, force=False)
+        deadline = time.monotonic() + grace_s
+        while time.monotonic() < deadline:
+            if not self.is_running(pid):
+                return
+            time.sleep(0.1)
+        _taskkill(pid, force=True)
+        proc = self._procs.get(pid)
+        if proc is not None:
+            proc.wait(timeout=5)
+
+
+def _taskkill(pid: int, force: bool) -> None:
+    argv = ["taskkill", "/T", *(["/F"] if force else []), "/PID", str(pid)]
+    subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)

@@ -51,6 +51,10 @@ class JobSpec:
     label: str = ""
     # Working directory on the executing machine. None = repo root there.
     cwd: str | None = None
+    # Training: the run directory on the executing machine, where its files live.
+    run_dir: str | None = None
+    # Remote label (user@host) of an ssh job, for provenance.
+    host: str | None = None
 
 
 @dataclass
@@ -70,6 +74,9 @@ class Job:
     log_path: str | None = None
     # Git commit the job was submitted from (AGENTS.md: every run is traceable).
     git_commit: str | None = None
+    # Set by Runner.refresh when the executor could not be reached; never loaded
+    # back from the ledger. A network blip is not a job state.
+    unreachable: str | None = None
 
     def is_active(self) -> bool:
         return self.status in (JobStatus.QUEUED, JobStatus.RUNNING)
@@ -92,6 +99,8 @@ class Job:
             executor=Executor(d["spec"].get("executor", "local")),
             label=d["spec"].get("label", ""),
             cwd=d["spec"].get("cwd"),
+            run_dir=d["spec"].get("run_dir"),
+            host=d["spec"].get("host"),
         )
 
         def _dt(v: str | None) -> datetime | None:
