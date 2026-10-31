@@ -64,7 +64,7 @@ function OverviewPage({ onNavigate }: OverviewPageProps) {
           </div>
 
           <p className="overview-value">π0.5</p>
-          <p className="overview-description">H0 · expert-only fine-tuning</p>
+          <p className="overview-description">H0 · Full fine-tuning</p>
 
           <div className="overview-actions">
             <button

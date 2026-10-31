@@ -1,0 +1,44 @@
+.checkpoint-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.train-panel.checkpoint-runs { padding: 0; overflow: hidden; }
+.checkpoint-runs-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px; }
+.checkpoint-runs-heading h2 { margin: 0; }
+.train-page .checkpoint-run {
+  display: block;
+  width: 100%;
+  padding: 15px 18px;
+  border: 0;
+  border-top: 1px solid var(--lab-border);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.train-page .checkpoint-run[aria-pressed='true'] {
+  color: var(--lab-accent);
+  background: var(--lab-active);
+  box-shadow: inset 2px 0 var(--lab-accent);
+}
+.checkpoint-run small { display: block; margin-top: 5px; color: var(--lab-muted); font-size: 12px; }
+.checkpoint-runs-empty { padding: 0 18px 18px; }
+.checkpoint-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 0 0 24px; padding-bottom: 16px; border-bottom: 1px solid var(--lab-border); font-size: 13px; }
+.checkpoint-summary div { display: flex; flex-wrap: wrap; gap: 8px; }
+.checkpoint-summary dt { color: var(--lab-muted); }
+.checkpoint-summary dd { margin: 0; }
+.checkpoint-back { margin-bottom: 20px; }
+.train-checkpoints-table.checkpoint-table { min-width: 420px; }
+.checkpoint-table td:last-child { text-align: right; }
+.checkpoint-table button { white-space: nowrap; }
+.checkpoint-final { color: var(--lab-accent); margin-left: 8px; font-size: 12px; }
+.checkpoint-intermediate { color: var(--lab-muted); }
+@media (max-width: 1100px) {
+  .checkpoint-layout { grid-template-columns: 190px minmax(0, 1fr); gap: 16px; }
+}
+@media (max-width: 800px) {
+  .checkpoint-layout { grid-template-columns: 1fr; }
+  .checkpoint-run-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+}
