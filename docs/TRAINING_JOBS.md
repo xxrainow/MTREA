@@ -88,7 +88,7 @@ it is the simplest correct JobSpec.
 
 ```bash
 scripts/train.sh --method=h0 --dataset=lab/pick_place --dataset-root=<dataset dir on the GPU host> \
-  --seed=0 --output=/data/mtrea/runs/h0_pick_place_s0_20261031-1200 \
+  --seed=0 --output=/data/mtrea/data/runs/h0_pick_place_s0_20261031-1200 \
   --steps=10000 --batch-size=16 --save-freq=1000
 ```
 
@@ -101,8 +101,8 @@ files, same stdout lines.
 | | fake | real |
 |---|---|---|
 | flag | `--fake` | none |
-| runs on | lab machine, LocalExecutor | GPU host, SSH executor |
-| run directory | `data/fake/runs/<run name>` | `/data/mtrea/runs/<run name>` |
+| runs on | lab machine (LocalExecutor) or GPU host (SSH executor) | GPU host, SSH executor |
+| run directory | `data/fake/runs/<run name>`, or the host's runs dir | `<data_dir>/runs/<run name>`, e.g. `/data/mtrea/data/runs/` |
 | datasets | `data/fake/collection/raw/<name>` | real recordings |
 | missing quantile stats | warning on stderr, run continues | refused, exit 2 |
 | lerobot | not needed (`research/fake_lerobot_train.py`) | `lerobot-train` v0.6.1 |
@@ -221,8 +221,6 @@ is lerobot's (usually 1); `status.json` still says `stopped`.
 
 ## 8. Not covered here
 
-- The SSH executor: running the command on the GPU host and reading the run
-  directory back.
 - Dataset sync is a separate job: the Datasets page's GPU server panel sends
   a training-ready dataset (`lab/core/dataset_sync.py`, a JobKind.SYNC job)
   and `GET /api/datasets/real/<name>/remote` returns its `remote_path`. Use
@@ -232,3 +230,27 @@ is lerobot's (usually 1); `status.json` still says `stopped`.
 - An eval split: lerobot's held-out-frame `eval_loss` is not configured, and
   held-out *tasks* are measured by rollouts, not by training loss.
 - Multi-GPU: one MIG slice, one process.
+
+## 9. How lab runs it
+
+`lab/core/training.py` (`/api/train`, the Train page) implements this
+contract; `lab/core/executors/ssh.py` runs GPU-host jobs.
+
+- Targets: `ssh` (the GPU host; real, or `--fake`) and `local` (this machine,
+  `--fake` only). An ssh run needs its dataset synced and uses its
+  `remote_path` as `--dataset-root`; `--output` is `<data_dir>/runs/<run name>`.
+  A local fake run writes `data/fake/runs/<run name>`.
+- The form sends only the values the user set. `--check` runs on the target
+  (`remote_prefix()` + `bash scripts/train.sh ... --check` over SSH; `python -m
+  research.train ... --check` locally) and its `command` is what gets
+  submitted: `bash scripts/train.sh ...` on the host, `python -m
+  research.train ...` locally (no bash on Windows).
+- lab adds its own checks: host reachable, dataset synced, and the host's
+  commit. The host runs its own checkout, so `git -C <repo_dir> rev-parse
+  HEAD` and `status --porcelain -uno` are compared with this checkout; a
+  different or dirty host checkout warns "git pull on the GPU host". It does
+  not block: `config.json` records the commit that actually ran.
+- Start re-runs the checks on the server. One TRAIN job at a time.
+- Run files are read back by path (`status.json`, `metrics.jsonl` from a byte
+  offset, `checkpoints.json`, `result.json`, `config.json`), over the SSH
+  transport for host runs. Unreachable leaves the job's status unchanged.
