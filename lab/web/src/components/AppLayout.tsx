@@ -9,6 +9,7 @@ const menuItems = [
   'Collect',
   'Datasets',
   'Train',
+  'Checkpoint',
   'Run & Evaluate',
   'Jobs',
 ] as const;

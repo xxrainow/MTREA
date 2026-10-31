@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import './JobsPage.css';
+import type { TrainingRun } from '../training/model';
+import TrainingMetricChart from '../components/TrainingMetricChart';
 
 type Job = {
   id: string;
@@ -21,7 +23,7 @@ const statusLabels: Record<string, string> = {
   unknown: 'Unknown',
 };
 
-function JobsPage() {
+function JobsPage({ trainingRuns = [] }: { trainingRuns?: TrainingRun[] }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +174,18 @@ function JobsPage() {
           {loading ? 'loading...' : 'Refresh'}
         </button>
       </div>
+
+      <section className="jobs-panel" aria-label="Simulated training jobs">
+        <h2>Training jobs · Simulation</h2>
+        <p className="jobs-note">One job per training run. These browser-only records are separate from backend jobs and disappear on reload.</p>
+        {!trainingRuns.length && <p>No simulated training jobs.</p>}
+        {[...trainingRuns].reverse().map(run => <details key={run.id}>
+          <summary>{run.config.runName} · {run.status} · {run.step.toLocaleString()} / {Number(run.config.steps).toLocaleString()} steps</summary>
+          <p>{run.id} · {run.config.target} · Simulated</p>
+          <div className="train-grid"><TrainingMetricChart metrics={run.metrics} kind="loss" /><TrainingMetricChart metrics={run.metrics} kind="lr" /></div>
+          <pre className="log-output">{run.logs.join('\n')}</pre>
+        </details>)}
+      </section>
 
       <section className="jobs-panel" aria-label="Job list">
         <div className="jobs-panel-header">
