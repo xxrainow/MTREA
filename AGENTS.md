@@ -46,6 +46,9 @@ pip install -e .                      # editable install
 pytest research/ -v                   # research-side tests (no GPU/robot needed)
 pytest tests/test_boundary.py         # enforces lab -> research direction
 scripts/train.sh --method=h0 --dataset=<repo_id> --output=data/runs/h0_pickplace_seed0 --seed=0 [--dry-run]
+scripts/train.sh --describe                       # JSON: methods, options, run files (for lab's Train page)
+scripts/train.sh <run flags> --check              # JSON preflight, writes nothing; exit 0 ok, 2 failed
+scripts/train.sh <run flags> --fake               # fake lerobot-train: no GPU, synthetic losses
 ```
 
 Wrapper scripts live in top-level `scripts/*.sh` (not `research/scripts/`).
@@ -89,6 +92,12 @@ enforces this; a violation is a failing test, not a style opinion.
 - Every training run gets a directory under `data/runs/<run_id>/` holding its
   resolved config, `metrics.jsonl`, and checkpoints. Nothing about a run is
   reconstructed from memory or from the command line after the fact.
+- lab drives training only through `scripts/train.sh` (`--describe`, `--check`,
+  the run, `--fake`) and the run-directory files (`status.json`,
+  `metrics.jsonl`, `checkpoints.json`, `result.json`). docs/TRAINING_JOBS.md is
+  that contract; change it in the same PR as `research/train.py`. Checkpoints
+  older than lerobot's `last` are pruned by default, and evaluation uses the
+  last checkpoint of every method.
 - Record the git commit with each run. A result that cannot be traced to a
   commit is not usable in the paper.
 - Seeds are explicit arguments, never defaulted silently.
