@@ -23,11 +23,13 @@ class JobConflict(RuntimeError):
 
 
 # Kinds that must not overlap with themselves. Train and norm_stats also
-# compete for the single GPU, so they exclude each other.
+# compete for the single GPU, so they exclude each other. One dataset sync at
+# a time keeps the GPU host's .incoming/ free of concurrent writers.
 _EXCLUSIVE: dict[JobKind, set[JobKind]] = {
     JobKind.TRAIN: {JobKind.TRAIN, JobKind.NORM_STATS},
     JobKind.NORM_STATS: {JobKind.TRAIN, JobKind.NORM_STATS},
     JobKind.SERVE_POLICY: {JobKind.SERVE_POLICY},
+    JobKind.SYNC: {JobKind.SYNC},
 }
 
 

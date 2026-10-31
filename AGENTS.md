@@ -134,6 +134,18 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
   Vite proxies `/api` and `/ws` (WebSocket) to the backend. Joint order comes
   from `robot/config.py` through `/api/hardware/config`, never a web constant.
 - Never commit anything under `data/`, `.env`, or calibration files.
+- `lab/core/remote.py` is the only place that builds ssh, rsync or tar-over-ssh
+  command lines, from `robot/configs/remote.yaml`. The SSH job executor must use
+  it and run every command as `remote_prefix()` + the command, so it starts in
+  repo_dir with the configured venv on PATH. Remote values are shlex-quoted
+  there; dataset names pass `validate_dataset_name` first.
+- Datasets on the GPU host (`<data_dir>/datasets/<name>`) are immutable and
+  identified by content fingerprint (`lab/core/dataset_manifest.py`), recorded
+  in `<name>.manifest.json` beside the copy. A sync is verified on the host
+  before it is moved out of `.incoming/`. A different dataset under an existing
+  name is refused, never overwritten: a changed dataset gets a new name. Only
+  `data/datasets/<name>`, or `data/raw/<name>` with q01/q99 stats, is sendable;
+  fake datasets never are.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.
 - Devices and Collect share the backend camera preview service. Page changes do not stop preview. A camera frame-read failure stops all preview cameras and exposes an error in status; reconnecting requires an explicit start.

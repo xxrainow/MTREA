@@ -223,7 +223,10 @@ is lerobot's (usually 1); `status.json` still says `stopped`.
 
 - The SSH executor: running the command on the GPU host and reading the run
   directory back.
-- Dataset sync: copying a recording to the GPU host before a real run.
+- Dataset sync is a separate job: the Datasets page's GPU server panel sends
+  a training-ready dataset (`lab/core/dataset_sync.py`, a JobKind.SYNC job)
+  and `GET /api/datasets/real/<name>/remote` returns its `remote_path`. Use
+  that as `--dataset-root` only when its `state` is `synced`.
 - Resume: lerobot's `--resume` is not wired, and a stopped run's directory
   cannot be reused. A new run starts from `--base`.
 - An eval split: lerobot's held-out-frame `eval_loss` is not configured, and

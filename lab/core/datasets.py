@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -11,6 +12,15 @@ from lab.core.dataset_metadata import read_episode_tasks, read_tasks
 
 
 Backend = Literal["real", "fake"]
+
+# Dataset names: also directory names here and on the GPU host.
+DATASET_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+
+
+def validate_dataset_name(name: str) -> str:
+    if not isinstance(name, str) or not DATASET_NAME.fullmatch(name):
+        raise ValueError("Invalid dataset name")
+    return name
 
 
 @dataclass
