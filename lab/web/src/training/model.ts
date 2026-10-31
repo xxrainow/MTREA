@@ -1,90 +1,194 @@
-export type TrainingConfig = {
-  target: 'ssh' | 'local'; dataset: string; seed: string; steps: string;
-  batchSize: string; learningRate: string; runName: string;
-  warmupSteps: string; saveFreq: string; logFreq: string; wandb: boolean;
+// Pure helpers for the Train and Checkpoint pages. The form comes from
+// GET /api/train/describe and everything about a run from its files on the
+// executing machine (docs/TRAINING_JOBS.md); nothing here is simulated.
+
+export type ParamType = 'string' | 'int' | 'float' | 'bool' | 'flag' | 'int_list';
+export type ParamGroup = 'basic' | 'advanced' | 'fixed' | 'fake';
+export type Param = {
+  name: string; flag: string; type: ParamType; required: boolean; default: unknown;
+  choices: string[] | null; min: number | null; label: string; help: string; group: ParamGroup;
 };
-export const defaultConfig: TrainingConfig = {
-  target: 'ssh', dataset: '', seed: '', steps: '10000', batchSize: '16',
-  learningRate: '0.000025', runName: 'h0_pickplace_seed0', warmupSteps: '1000',
-  saveFreq: '1000', logFreq: '200', wandb: false,
+export type Method = {
+  name: string; label: string; description: string; max_batch_size_tested: number;
+  oom_batch_size: number | null; seconds_per_step: Record<string, number>;
 };
-export type TrainingMetric = { step: number; loss: number; lr: number };
-export type TrainingRun = {
-  id: string; config: TrainingConfig; status: 'running' | 'disconnected' | 'completed' | 'stopped'; step: number; metrics: TrainingMetric[]; logs: string[];
+export type Describe = {
+  params: Param[]; methods: Method[]; run_name_template: string;
+  fixed: { lerobot_flags: Record<string, string>; scheduler: string };
 };
-export type Checkpoint = { id: string; run: TrainingRun; step: number; final: boolean };
-export type TrainingState = {
-  config: TrainingConfig; checked: boolean; errors: string[];
-  run: TrainingRun | null; checkpoints: Checkpoint[]; runs: TrainingRun[];
+
+export type Target = 'ssh' | 'local';
+export type DatasetChoice = { backend: 'real' | 'fake'; name: string };
+export type TrainingForm = {
+  target: Target; fake: boolean; dataset: DatasetChoice | null;
+  // Inputs as typed, by param name. Absent means "not set": train.sh's default applies.
+  values: Record<string, string | boolean>;
+  runName: string; runNameEdited: boolean;
 };
-export const initialTrainingState: TrainingState = {
-  config: defaultConfig, checked: false, errors: [], run: null, checkpoints: [], runs: [],
+export type TrainRequest = {
+  target: Target; fake: boolean; dataset: DatasetChoice; run_name: string; params: Record<string, unknown>;
 };
-export function validateConfig(config: TrainingConfig, checkpoints: Checkpoint[]): string[] {
+
+export type CheckItem = { id: string; status: 'ok' | 'warn' | 'fail'; message: string; link?: string };
+export type CheckResult = {
+  ok: boolean; checks: CheckItem[]; estimated_seconds: number | null; command: string | null;
+  target: Target; host: string | null; run_dir: string; fake: boolean;
+};
+
+export type RunStatusFile = {
+  status: 'running' | 'done' | 'failed' | 'stopped'; fake: boolean; method: string; seed: number;
+  step: number; total_steps: number; loss: number | null; lr: number | null;
+  seconds_per_step: number | null; eta_s: number | null; last_checkpoint_step: number | null;
+  wandb_url: string | null; failure: 'oom' | 'error' | null; started_at: string; updated_at: string;
+};
+// status.json's word, or what the job's fate says when the file cannot.
+export type RunState = RunStatusFile['status'] | 'starting' | 'ended_unknown' | 'queued' | 'unknown';
+export type Metric = {
+  step: number; loss: number; lr: number; grad_norm?: number; update_s?: number; data_s?: number;
+  mem_gb?: number; time?: string;
+};
+export type CheckpointEntry = {
+  step: number; path: string; complete: boolean; has_training_state: boolean; last: boolean; saved_at: string;
+};
+export type TrainJob = {
+  id: string; status: string; pid: number | null; exit_code: number | null;
+  submitted_at: string; started_at: string | null; finished_at: string | null;
+  git_commit: string | null; unreachable: string | null;
+  spec: { kind: string; cmd: string; executor: 'local' | 'ssh'; label: string; run_dir: string | null; host: string | null };
+};
+export type RunSummary = {
+  job: TrainJob; status: RunStatusFile | null; state: RunState; checkpoint_count: number | null; unreachable: string | null;
+};
+
+// Set by lab from the target and dataset, never typed into the form.
+export const LAB_PARAMS = new Set(['dataset', 'dataset_root', 'output', 'fake']);
+const NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+export const METRICS_LIMIT = 2000;
+
+export function initialForm(): TrainingForm {
+  return { target: 'ssh', fake: false, dataset: null, values: {}, runName: '', runNameEdited: false };
+}
+
+export function formGroups(describe: Describe, fake: boolean) {
+  const shown = describe.params.filter(p => !LAB_PARAMS.has(p.name));
+  return {
+    basic: shown.filter(p => p.group === 'basic'),
+    advanced: shown.filter(p => p.group === 'advanced'),
+    fixed: shown.filter(p => p.group === 'fixed'),
+    fake: fake ? shown.filter(p => p.group === 'fake') : [],
+  };
+}
+
+function pad(n: number) { return String(n).padStart(2, '0'); }
+
+export function runNameFrom(template: string, method: string, dataset: string, seed: string, now: Date): string {
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+  return template.replace('{method}', method || 'method').replace('{dataset_name}', dataset.split('/').at(-1) || 'dataset')
+    .replace('{seed}', seed === '' ? 'X' : seed).replace('{yyyymmdd-HHMM}', stamp);
+}
+
+export function displayValue(param: Param, value: string | boolean | undefined): string | boolean {
+  if (value !== undefined) return value;
+  if (param.type === 'bool') return Boolean(param.default);
+  if (param.default === null || param.default === undefined) return '';
+  return Array.isArray(param.default) ? param.default.join(',') : String(param.default);
+}
+
+// Converts typed inputs to the request's params: only fields the user set.
+export function toRequest(describe: Describe, form: TrainingForm): { request: TrainRequest | null; errors: string[] } {
   const errors: string[] = [];
-  if (config.dataset !== 'demo/pick_place') errors.push('Select the simulated T_sub dataset.');
-  if (!config.seed.trim() || !Number.isSafeInteger(Number(config.seed)) || Number(config.seed) < 0) errors.push('Seed must be an explicit non-negative integer.');
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(config.runName)) errors.push('Run name may contain letters, numbers, underscores and hyphens.');
-  for (const field of ['steps', 'batchSize', 'warmupSteps', 'saveFreq', 'logFreq'] as const) {
-    if (!Number.isSafeInteger(Number(config[field])) || Number(config[field]) <= 0) errors.push(`${field} must be a positive integer.`);
+  const params: Record<string, unknown> = {};
+  const groups = formGroups(describe, form.fake);
+  const editable = [...groups.basic, ...groups.advanced, ...groups.fake];
+  for (const p of editable) {
+    const raw = form.values[p.name];
+    if (raw === undefined || raw === '') {
+      if (p.required) errors.push(`${p.label} is required.`);
+      continue;
+    }
+    if (p.type === 'bool') { params[p.name] = Boolean(raw); continue; }
+    const text = String(raw).trim();
+    if (p.type === 'int') {
+      const n = Number(text);
+      if (!/^-?\d+$/.test(text) || !Number.isSafeInteger(n)) { errors.push(`${p.label} must be a whole number.`); continue; }
+      if (p.min !== null && n < p.min) { errors.push(`${p.label} must be at least ${p.min}.`); continue; }
+      if (p.name === 'seed' && n < 0) { errors.push('Seed must be a non-negative integer.'); continue; }
+      params[p.name] = n;
+    } else if (p.type === 'float') {
+      const n = Number(text);
+      if (text === '' || !Number.isFinite(n)) { errors.push(`${p.label} must be a finite number.`); continue; }
+      if (p.min !== null && n < p.min) { errors.push(`${p.label} must be at least ${p.min}.`); continue; }
+      params[p.name] = n;
+    } else if (p.type === 'int_list') {
+      const items = text.split(',').map(s => s.trim()).filter(Boolean);
+      if (items.some(s => !/^\d+$/.test(s))) { errors.push(`${p.label} must be comma-separated steps.`); continue; }
+      params[p.name] = items.map(Number);
+    } else {
+      if (p.choices && !p.choices.includes(text)) { errors.push(`${p.label} must be one of ${p.choices.join(', ')}.`); continue; }
+      params[p.name] = text;
+    }
   }
-  if (Number(config.warmupSteps) >= Number(config.steps)) errors.push('Warmup steps must be smaller than training steps.');
-  if (!Number.isFinite(Number(config.learningRate)) || Number(config.learningRate) <= 0) errors.push('Learning rate must be positive and finite.');
-  if (config.target === 'ssh' && Number(config.batchSize) > 16) errors.push('The A100 MIG recipe supports batch sizes up to 16.');
-  if (checkpoints.some(c => c.run.config.runName === config.runName)) errors.push('This demo run name already has saved results. Choose a new name.');
-  if (Number(config.steps) / Number(config.saveFreq) > 2000) errors.push('The demo supports at most 2,000 save intervals per run.');
-  return errors;
-}
-export function isTrainingActive(run: TrainingRun | null): boolean {
-  return run?.status === 'running' || run?.status === 'disconnected';
-}
-export type TrainingAction =
-  | { type: 'configure'; config: TrainingConfig }
-  | { type: 'check' }
-  | { type: 'start'; id: string }
-  | { type: 'tick' | 'advance' | 'complete' | 'disconnect' | 'reconnect' | 'stop' | 'new' };
-
-export function trainingReducer(state: TrainingState, action: TrainingAction): TrainingState {
-  if (action.type === 'configure') return isTrainingActive(state.run) ? state : { ...state, config: action.config, checked: false, errors: [] };
-  if (action.type === 'check') {
-    const errors = validateConfig(state.config, state.checkpoints);
-    return { ...state, errors, checked: errors.length === 0 };
-  }
-  if (action.type === 'start') {
-    if (!state.checked || isTrainingActive(state.run) || validateConfig(state.config, state.checkpoints).length) return state;
-    const run: TrainingRun = { id: action.id, config: { ...state.config }, status: 'running', step: 0, metrics: [], logs: ['SIMULATION started · No training process launched'] };
-    return { ...state, checked: false, run, runs: [...state.runs, run] };
-  }
-  if (action.type === 'new') return isTrainingActive(state.run) ? state : { ...state, run: null, checked: false };
-  const run = state.run;
-  if (!run || !isTrainingActive(run)) return state;
-  if (action.type === 'disconnect') return updateRun(state, { ...run, status: 'disconnected', logs: [...run.logs, 'SIMULATION connection lost'].slice(-200) });
-  if (action.type === 'reconnect') return updateRun(state, { ...run, status: 'running', logs: [...run.logs, 'SIMULATION reconnected'].slice(-200) });
-  // A lost connection gives no evidence of completion or successful cancellation.
-  if (run.status === 'disconnected') return state;
-  if (action.type === 'stop') return updateRun(state, { ...run, status: 'stopped', logs: [...run.logs, 'SIMULATION stopped'].slice(-200) });
-  const total = Number(run.config.steps);
-  const step = action.type === 'complete' ? total : Math.min(action.type === 'tick' ? total : total - 1, run.step + Math.max(1, Math.floor(total / (action.type === 'tick' ? 100 : 5))));
-  const completed = step === total;
-  const warmup = Number(run.config.warmupSteps);
-  const peak = Number(run.config.learningRate);
-  const lr = step < warmup ? peak * step / warmup : peak / 10 + peak * .9 * (1 + Math.cos(Math.PI * (step - warmup) / (total - warmup))) / 2;
-  const loss = .12 + .9 * Math.exp(-5 * step / total) + .015 * Math.sin(step / total * 80);
-  const metrics = [...run.metrics, { step, loss, lr }].slice(-500);
-  const logs = [...run.logs, `SIMULATION step=${step}/${total} loss=${loss.toFixed(4)} lr=${lr.toExponential(3)}`, ...(completed ? ['SIMULATION completed · Final snapshot saved'] : [])].slice(-200);
-  const updated: TrainingRun = { ...run, step, metrics, logs, status: completed ? 'completed' : 'running' };
-  const checkpoints = [...state.checkpoints];
-  const interval = Number(run.config.saveFreq);
-  const savedSteps: number[] = [];
-  for (let saved = (Math.floor(run.step / interval) + 1) * interval; saved <= step; saved += interval) savedSteps.push(saved);
-  if (completed && !savedSteps.includes(total)) savedSteps.push(total);
-  for (const savedStep of savedSteps) {
-    const id = `${run.id}:${savedStep}`;
-    if (!checkpoints.some(c => c.id === id)) checkpoints.push({ id, run: updated, step: savedStep, final: completed && savedStep === total });
-  }
-  return { ...updateRun(state, updated), checkpoints };
+  if (!form.dataset) errors.push('Select a dataset.');
+  if (!NAME.test(form.runName)) errors.push('Run name may contain letters, digits, "_", "." and "-".');
+  if (form.target === 'local' && !form.fake) errors.push('This machine runs fake training only.');
+  if (errors.length || !form.dataset) return { request: null, errors };
+  return { request: { target: form.target, fake: form.fake, dataset: form.dataset, run_name: form.runName, params }, errors };
 }
 
-function updateRun(state: TrainingState, run: TrainingRun): TrainingState {
-  return { ...state, run, runs: state.runs.map(item => item.id === run.id ? run : item) };
+// A check is valid for Start only while the inputs are exactly those checked.
+export function requestKey(request: TrainRequest | null): string {
+  return request ? JSON.stringify(request) : '';
+}
+export function canStart(check: CheckResult | null, checkedKey: string, currentKey: string): boolean {
+  return Boolean(check?.ok) && checkedKey !== '' && checkedKey === currentKey;
+}
+
+export function isActiveState(state: RunState | null | undefined): boolean {
+  return state === 'running' || state === 'starting' || state === 'queued';
+}
+
+export function stateLabel(state: RunState, failure?: RunStatusFile['failure']): string {
+  switch (state) {
+    case 'running': return 'Training';
+    case 'starting': case 'queued': return 'Starting';
+    case 'done': return 'Completed';
+    case 'stopped': return 'Stopped';
+    case 'failed': return failure === 'oom' ? 'Failed · Out of memory' : 'Failed';
+    case 'ended_unknown': return 'Ended · status unknown';
+    default: return 'Unknown';
+  }
+}
+
+// Metrics arrive by byte offset, so a page never re-reads what it has.
+export function appendMetrics(existing: Metric[], incoming: Metric[], limit = METRICS_LIMIT): Metric[] {
+  if (!incoming.length) return existing;
+  const last = existing.at(-1)?.step ?? -Infinity;
+  const merged = [...existing, ...incoming.filter(m => m.step > last)];
+  return merged.length > limit ? merged.slice(-limit) : merged;
+}
+
+export function progressPercent(step: number | undefined, total: number | undefined): number {
+  if (!step || !total) return 0;
+  return Math.min(100, Math.floor(step / total * 100));
+}
+
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '—';
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  if (h) return `${h} h ${m} min`;
+  if (m) return `${m} min ${s % 60} s`;
+  return `${s} s`;
+}
+
+export function sortCheckpoints(entries: CheckpointEntry[]): CheckpointEntry[] {
+  return [...entries].sort((a, b) => b.step - a.step);
+}
+
+// "<job id>:<step>" links a checkpoint across pages; run identity is the job id.
+export function checkpointId(jobId: string, step: number): string { return `${jobId}:${step}`; }
+export function parseCheckpointId(id: string): { jobId: string; step: number } | null {
+  const at = id.lastIndexOf(':');
+  const step = Number(id.slice(at + 1));
+  return at > 0 && Number.isSafeInteger(step) ? { jobId: id.slice(0, at), step } : null;
 }

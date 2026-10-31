@@ -227,3 +227,16 @@
 .train-chart-point { fill: var(--lab-accent); }
 .train-metric-empty { min-height: 200px; display: grid; place-items: center; color: var(--lab-muted); }
 .train-live-log { max-height: 280px; overflow-y: auto; }
+.train-grid.train-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1200px) { .train-grid.train-grid-3 { grid-template-columns: 1fr; } }
+.train-run-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.train-badge-fake { color: var(--lab-muted); border-color: var(--lab-border); }
+.train-path { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.train-check-list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
+.train-check { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; color: var(--lab-text); overflow-wrap: anywhere; }
+.train-check-status { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--lab-muted); }
+.train-check.is-ok .train-check-status { color: var(--lab-muted); }
+.train-check.is-warn .train-check-status { color: var(--lab-accent); }
+.train-check.is-fail .train-check-status { color: var(--lab-error); }
+.train-page button.train-inline-link { min-height: 0; padding: 0; border: 0; background: none; color: var(--lab-accent); text-decoration: underline; font: inherit; }
+.train-link-button { display: inline-flex; align-items: center; min-height: 42px; padding: 0 16px; border: 1px solid var(--lab-border); border-radius: 4px; color: var(--lab-accent); text-decoration: none; }

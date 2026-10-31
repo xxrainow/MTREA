@@ -1,75 +1,247 @@
-import { useState } from 'react';
-import type { Dispatch } from 'react';
-import { isTrainingActive } from '../training/model';
-import type { TrainingAction, TrainingConfig, TrainingState } from '../training/model';
+import { useEffect, useMemo, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
+import { loadDatasets } from '../api/datasets';
+import type { DatasetSummary } from '../api/datasets';
+import { errorMessage } from '../api/hardware';
+import { loadRemoteMarkers } from '../api/remote';
+import type { RemoteMarker } from '../api/remote';
+import { StartRefused, checkTraining, loadDescribe, loadRuns, loadTargets, startTraining } from '../api/training';
+import type { Targets } from '../api/training';
+import {
+  canStart, displayValue, formatDuration, formGroups, isActiveState, requestKey, runNameFrom, toRequest,
+} from '../training/model';
+import type { CheckResult, Describe, Param, TrainingForm } from '../training/model';
+import TrainRunMonitor from '../components/TrainRunMonitor';
 import './TrainPage.css';
-import TrainingMetricChart from '../components/TrainingMetricChart';
 
-type Props = { state: TrainingState; dispatch: Dispatch<TrainingAction>; onOpenCheckpoint: (id: string) => void };
-function TrainPage({ state, dispatch, onOpenCheckpoint }: Props) {
-  const [confirmStop, setConfirmStop] = useState(false);
-  const { config, run } = state;
-  function configure(patch: Partial<TrainingConfig>) {
-    dispatch({ type: 'configure', config: { ...config, ...patch } });
+type Props = {
+  form: TrainingForm;
+  setForm: Dispatch<SetStateAction<TrainingForm>>;
+  // The run on screen. Kept by App so menu navigation returns to it.
+  jobId: string | null;
+  onJobChange: (jobId: string | null) => void;
+  onOpenCheckpoint: (id: string) => void;
+  onOpenDatasets: () => void;
+};
+
+const markerLabels: Record<RemoteMarker, string> = {
+  synced: 'synced', different: 'different copy on host', not_synced: 'not synced', not_sent_fake: 'fake', unknown: 'sync unknown',
+};
+
+function TrainPage({ form, setForm, jobId, onJobChange, onOpenCheckpoint, onOpenDatasets }: Props) {
+  const [describe, setDescribe] = useState<Describe | null>(null);
+  const [targets, setTargets] = useState<Targets | null>(null);
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [markers, setMarkers] = useState<Record<string, RemoteMarker> | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [check, setCheck] = useState<CheckResult | null>(null);
+  const [checkedKey, setCheckedKey] = useState('');
+  const [busy, setBusy] = useState<'check' | 'start' | null>(null);
+  const [actionError, setActionError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    Promise.all([loadDescribe(signal), loadTargets(signal), loadDatasets(signal)])
+      .then(([nextDescribe, nextTargets, nextDatasets]) => {
+        setDescribe(nextDescribe);
+        setTargets(nextTargets);
+        setDatasets(nextDatasets);
+      })
+      .catch(reason => { if (!signal.aborted) setLoadError(errorMessage(reason)); });
+    // Separate: it asks the GPU host and may be slow.
+    loadRemoteMarkers(signal).then(setMarkers).catch(() => { /* markers are a hint */ });
+    if (jobId === null) {
+      // After a reload, return to a run that is still going.
+      loadRuns(signal).then(runs => {
+        const active = runs.find(r => isActiveState(r.state));
+        if (active) onJobChange(active.job.id);
+      }).catch(() => { /* the setup form still works */ });
+    }
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per visit
+  }, []);
+
+  const { request, errors } = useMemo(
+    () => (describe ? toRequest(describe, form) : { request: null, errors: [] }), [describe, form]);
+  const currentKey = requestKey(request);
+  const startable = canStart(check, checkedKey, currentKey);
+
+  function update(patch: Partial<TrainingForm>) {
+    setForm(prev => {
+      const next = { ...prev, ...patch };
+      if (!next.runNameEdited && describe) {
+        next.runName = runNameFrom(describe.run_name_template, String(next.values.method ?? ''),
+          next.dataset?.name ?? '', String(next.values.seed ?? ''), new Date());
+      }
+      return next;
+    });
+    setActionError('');
   }
-  function numericField(key: keyof Pick<TrainingConfig, 'seed' | 'steps' | 'batchSize' | 'learningRate' | 'warmupSteps' | 'saveFreq' | 'logFreq'>, label: string) {
-    return <label className="train-field">{label}<input type="number" value={config[key]} min={key === 'seed' ? 0 : key === 'learningRate' ? undefined : 1} step={key === 'learningRate' ? 'any' : 1} placeholder={key === 'seed' ? 'e.g. 0' : undefined} onChange={e => configure({ [key]: e.target.value })} /></label>;
+  function setValue(name: string, value: string | boolean) {
+    update({ values: { ...form.values, [name]: value } });
   }
-  const active = isTrainingActive(run);
-  const disconnected = run?.status === 'disconnected';
+
+  async function runCheck() {
+    if (!request) return;
+    setBusy('check');
+    setActionError('');
+    try {
+      setCheck(await checkTraining(request));
+      setCheckedKey(currentKey);
+    } catch (reason) {
+      setCheck(null);
+      setActionError(errorMessage(reason));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function start() {
+    if (!request || !startable) return;
+    setBusy('start');
+    setActionError('');
+    try {
+      const job = await startTraining(request);
+      setCheck(null);
+      setCheckedKey('');
+      onJobChange(job.id);
+    } catch (reason) {
+      if (reason instanceof StartRefused && reason.check) setCheck(reason.check);
+      setActionError(errorMessage(reason));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function newSetup() {
+    onJobChange(null);
+    // A new run needs a new name; keep the rest of the settings.
+    update({ runNameEdited: false });
+  }
+
+  if (jobId) {
+    return <main className="train-page">
+      <div className="train-heading">
+        <div><h1>Train</h1><p>Follow the run and its training progress.</p></div>
+      </div>
+      <TrainRunMonitor key={jobId} jobId={jobId} onNew={newSetup} onOpenCheckpoint={onOpenCheckpoint} />
+    </main>;
+  }
+
+  const groups = describe ? formGroups(describe, form.fake) : null;
+  const methodParam = describe?.params.find(p => p.name === 'method');
+  const method = describe?.methods.find(m => m.name === form.values.method);
+  const ssh = targets?.ssh;
+  const datasetOptions = datasets.filter(d => form.target === 'local' || d.backend === 'real');
+  const selectedKey = form.dataset ? `${form.dataset.backend}/${form.dataset.name}` : '';
+
+  function field(p: Param) {
+    const value = displayValue(p, form.values[p.name]);
+    const required = p.required ? ' · Required' : '';
+    if (p.type === 'bool') {
+      return <label key={p.name} className="train-checkbox" title={p.help}>
+        <input type="checkbox" checked={Boolean(value)} onChange={e => setValue(p.name, e.target.checked)} />{p.label}
+      </label>;
+    }
+    if (p.choices) {
+      return <label key={p.name} className="train-field" title={p.help}>{p.label}{required}
+        <select value={String(value)} onChange={e => setValue(p.name, e.target.value)}>
+          {p.required && <option value="">Select…</option>}
+          {p.choices.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </label>;
+    }
+    const numeric = p.type === 'int' || p.type === 'float';
+    return <label key={p.name} className="train-field" title={p.help}>{p.label}{required}
+      <input type={numeric ? 'number' : 'text'} value={String(value)} step={p.type === 'float' ? 'any' : 1}
+        min={p.min ?? undefined} placeholder={p.name === 'seed' ? 'e.g. 0' : undefined}
+        onChange={e => setValue(p.name, e.target.value)} />
+    </label>;
+  }
+
   return <main className="train-page">
     <div className="train-heading">
-      <div><h1>Train</h1><p>{run ? 'Follow the active run and its training progress.' : 'Choose a compute target and configure policy training.'}</p></div>
-      {!run && <button type="button" className="train-button-primary" disabled={!state.checked} onClick={() => dispatch({ type: 'start', id: crypto.randomUUID() })}>Start training</button>}
+      <div><h1>Train</h1><p>Choose a compute target and configure policy training.</p></div>
+      <button type="button" className="train-button-primary" disabled={!startable || busy !== null}
+        title={startable ? undefined : 'Check settings first; any change needs a new check.'}
+        onClick={() => void start()}>{busy === 'start' ? 'Starting…' : 'Start training'}</button>
     </div>
-    <p className="train-demo-note"><strong>Simulation only.</strong> No local process, SSH command, dataset transfer or model file is created. State is retained across menu navigation, but not browser reload.</p>
-    {run ? <div className="train-monitor-main">
-      <section className="train-panel">
-        <div className="train-panel-heading"><h2>{run.config.runName}</h2><span className="train-badge" role="status">{disconnected ? 'Connection lost · Status unknown' : run.status === 'running' ? 'Training · Simulated' : run.status === 'completed' ? 'Completed · Simulated' : 'Stopped · Simulated'}</span></div>
-        <dl className="train-details"><div><dt>Compute target</dt><dd>{run.config.target === 'ssh' ? 'GPU server · A100 / MIG 3g.40gb' : 'Local · Backend machine'}</dd></div><div><dt>Progress</dt><dd>{run.step.toLocaleString()} / {Number(run.config.steps).toLocaleString()} steps · {Math.floor(run.step / Number(run.config.steps) * 100)}%</dd></div></dl>
-        <progress className="train-progress" aria-label="Training progress" value={run.step} max={Number(run.config.steps)} />
-        <dl className="train-details"><div><dt>Last report</dt><dd>{disconnected ? 'No updates since connection loss' : 'Updated by simulation controls'}</dd></div><div><dt>train/loss</dt><dd>{run.metrics.at(-1)?.loss.toFixed(4) ?? '—'} · Simulated</dd></div><div><dt>Learning rate</dt><dd>{run.metrics.at(-1)?.lr.toExponential(3) ?? '—'} · Simulated</dd></div></dl>
-        {active ? <>
-          <div className="train-actions">
-            {run.config.target === 'ssh' && <button type="button" onClick={() => dispatch({ type: disconnected ? 'reconnect' : 'disconnect' })}>{disconnected ? 'Reconnect · Demo' : 'Disconnect · Demo'}</button>}
-            <button type="button" disabled={disconnected} onClick={() => setConfirmStop(true)}>Stop training…</button>
-          </div>
-          {confirmStop && <div className="train-stop-confirm" role="group" aria-label="Confirm stopping training"><p>Stop this simulation? Saved snapshots remain. The current step is not saved automatically.</p><div className="train-actions"><button type="button" disabled={disconnected} onClick={() => { dispatch({ type: 'stop' }); setConfirmStop(false); }}>Confirm stop</button><button type="button" onClick={() => setConfirmStop(false)}>Keep training</button></div></div>}
-        </> : <div className="train-actions">{run.status === 'completed' && <button type="button" onClick={() => onOpenCheckpoint(`${run.id}:${Number(run.config.steps)}`)}>View final checkpoint</button>}<button type="button" className="train-button-primary" onClick={() => dispatch({ type: 'new' })}>New training setup</button></div>}
-        <p className="train-note">{disconnected ? 'Connection loss is not training failure. Reconnect to the same run; do not submit another job.' : run.status === 'completed' ? 'Training is complete. Final metrics and logs remain here. Open the final checkpoint or choose New training setup when ready.' : 'Simulated metrics update every second while running, including on other pages. Checkpoints follow the configured save interval.'}</p>
+    {loadError && <p className="train-errors" role="alert">{loadError}</p>}
+    <section className="train-panel train-compute">
+      <h2>Compute target</h2>
+      <label className="train-field">Run training on
+        <select value={form.target} onChange={e => update({ target: e.target.value as TrainingForm['target'], fake: e.target.value === 'local' ? true : form.fake, dataset: null })}>
+          <option value="ssh">GPU host{ssh?.host ? ` · ${ssh.host}` : ''}</option>
+          <option value="local">This machine (fake)</option>
+        </select>
+      </label>
+      {form.target === 'ssh' && <>
+        <label className="train-checkbox"><input type="checkbox" checked={form.fake} onChange={e => update({ fake: e.target.checked })} />Fake run on the GPU host (no GPU work; tests the remote path)</label>
+        <p className="train-note">{!ssh ? 'Checking the GPU host…' : !ssh.configured ? `Not configured: ${ssh.message}` : ssh.reachable ? `Reachable · ${ssh.host}` : `Unreachable: ${ssh.message}`}</p>
+      </>}
+      {form.target === 'local' && <p className="train-note">This machine has no GPU for π0.5, so it runs fake training only: synthetic losses, placeholder checkpoints under data/fake/runs.</p>}
+    </section>
+    {groups && <div className="train-grid">
+      <section className="train-panel"><h2>Training inputs</h2>
+        <label className="train-field">Dataset
+          <select value={selectedKey} onChange={e => {
+            const picked = datasetOptions.find(d => `${d.backend}/${d.name}` === e.target.value);
+            update({ dataset: picked ? { backend: picked.backend, name: picked.name } : null });
+          }}>
+            <option value="">Select a dataset</option>
+            {datasetOptions.map(d => <option key={d.id} value={`${d.backend}/${d.name}`}>
+              {d.name}{d.backend === 'fake' ? ' · fake' : ''}{form.target === 'ssh' && markers ? ` · ${markerLabels[markers[d.id] ?? 'unknown']}` : ''}
+            </option>)}
+          </select>
+        </label>
+        {form.target === 'ssh' && <p className="train-note">The GPU host trains on its synced copy. Send a dataset from Datasets → GPU server first. <button type="button" className="train-inline-link" onClick={onOpenDatasets}>Open Datasets</button></p>}
+        {methodParam && field(methodParam)}
+        {method && <p className="train-note">{method.description} Tested up to batch {method.max_batch_size_tested}{method.oom_batch_size ? `; out of memory at ${method.oom_batch_size}` : ''}.</p>}
+        <label className="train-field">Run name
+          <input value={form.runName} onChange={e => update({ runName: e.target.value, runNameEdited: true })} />
+        </label>
+        <p className="train-note">Run directory: {check && checkedKey === currentKey ? check.run_dir : `<runs on the ${form.target === 'ssh' ? 'GPU host' : 'this machine'}>/${form.runName || '<run name>'}`}</p>
       </section>
-      <div className="train-grid"><TrainingMetricChart metrics={run.metrics} kind="loss" /><TrainingMetricChart metrics={run.metrics} kind="lr" /></div>
-      <section className="train-panel"><h2>Training logs · Simulation</h2><pre className="train-log train-live-log">{run.logs.join('\n')}</pre></section>
-    </div> : <>
-      <section className="train-panel train-compute">
-        <h2>Compute target</h2>
-        <label className="train-field">Run training on<select value={config.target} onChange={e => configure({ target: e.target.value as TrainingConfig['target'] })}><option value="ssh">GPU server · Lab A100 · SSH</option><option value="local">Local · Backend machine</option></select></label>
-        <p className="train-note">{config.target === 'ssh' ? 'Training will use a configured SSH server profile when remote execution is integrated.' : 'Local means the machine running the web backend, which may differ from your browser device.'}</p>
-        <details><summary>{config.target === 'ssh' ? 'Server environment and connection settings' : 'Local execution requirements'}</summary>
-          <dl className="train-details"><div><dt>Environment</dt><dd>Python 3.12+ / LeRobot 0.6.1</dd></div><div><dt>GPU</dt><dd>{config.target === 'ssh' ? 'A100 MIG 3g.40gb · Recipe target, not detected' : 'CUDA compatibility and memory must be checked'}</dd></div>{config.target === 'ssh' && <><div><dt>Connection profile</dt><dd>robot/configs/remote.yaml · Not loaded</dd></div><div><dt>Profile fields</dt><dd>host / user / ssh_key / repo_dir / data_dir / python</dd></div></>}</dl>
+      <section className="train-panel"><h2>Training conditions</h2>
+        <div className="train-field-pair">{groups.basic.filter(p => p.name !== 'method').map(field)}</div>
+        <details><summary>Advanced settings</summary>
+          <div className="train-field-pair">{groups.advanced.filter(p => p.type !== 'bool').map(field)}</div>
+          {groups.advanced.filter(p => p.type === 'bool').map(field)}
+        </details>
+        {groups.fake.length > 0 && <details open><summary>Fake run</summary><div className="train-field-pair">{groups.fake.map(field)}</div></details>}
+        <details><summary>Fixed for every run</summary>
+          <dl className="train-details">
+            {groups.fixed.map(p => <div key={p.name}><dt>{p.label}</dt><dd>{String(p.default)}</dd></div>)}
+            {Object.entries(describe!.fixed.lerobot_flags).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+            <div><dt>LR schedule</dt><dd>{describe!.fixed.scheduler}</dd></div>
+          </dl>
         </details>
       </section>
-      <div className="train-grid">
-        <section className="train-panel"><h2>Training inputs</h2>
-          <label className="train-field">Dataset<select value={config.dataset} onChange={e => configure({ dataset: e.target.value })}><option value="">Select a dataset</option><option value="demo/pick_place">pick_place_demo · T_sub · Simulated</option></select></label>
-          <p className="train-note">{config.target === 'ssh' ? 'Real local datasets will require transfer and verification on the GPU server.' : 'The execution machine must be able to read the training dataset.'}</p>
-          <dl className="train-details"><div><dt>Training method</dt><dd>H0 · Full fine-tuning</dd></div><div><dt>Policy / Base model</dt><dd>π0.5 / lerobot/pi05_base</dd></div></dl>
-          <label className="train-field">Run name<input value={config.runName} onChange={e => configure({ runName: e.target.value })} /></label>
-          <p className="train-note">Planned output: data/runs/{config.runName || '<run_name>'}</p>
-        </section>
-        <section className="train-panel"><h2>Training conditions</h2>
-          <div className="train-field-pair">{numericField('seed', 'Seed · Required')}{numericField('steps', 'Training steps')}{numericField('batchSize', 'Batch size')}{numericField('learningRate', 'Learning rate · Peak')}</div>
-          <label className="train-checkbox"><input type="checkbox" checked={config.wandb} onChange={e => configure({ wandb: e.target.checked })} />Enable Weights & Biases</label>
-          {config.wandb && <p className="train-note">Execution-host authentication must be checked before real training.</p>}
-          <details><summary>Advanced settings</summary><div className="train-field-pair">{numericField('warmupSteps', 'Warmup steps')}{numericField('saveFreq', 'Checkpoint interval')}{numericField('logFreq', 'Log interval')}</div><dl className="train-details"><div><dt>Precision / Memory</dt><dd>bf16 / Gradient checkpointing</dd></div><div><dt>LR schedule</dt><dd>Cosine · Floor = peak / 10</dd></div><div><dt>Hub auto-upload</dt><dd>Off</dd></div></dl></details>
-        </section>
+    </div>}
+    <section className="train-panel train-checks"><h2>Pre-run checks</h2>
+      {errors.length > 0 && <ul className="train-errors">{errors.map(e => <li key={e}>{e}</li>)}</ul>}
+      {check && <>
+        {checkedKey !== currentKey && <p className="train-note" role="status">Settings changed since this check. Check again before starting.</p>}
+        <ul className="train-check-list">
+          {check.checks.map(c => <li key={c.id} className={`train-check is-${c.status}`}>
+            <span className="train-check-status">{c.status}</span>
+            <span>{c.message}{c.link === 'datasets' && <> <button type="button" className="train-inline-link" onClick={onOpenDatasets}>Open Datasets</button></>}</span>
+          </li>)}
+        </ul>
+        <dl className="train-details">
+          <div><dt>Result</dt><dd role="status">{check.ok ? 'Ready to start' : 'Not ready'}</dd></div>
+          <div><dt>Estimated time</dt><dd>{formatDuration(check.estimated_seconds)}{check.estimated_seconds != null ? ' of training steps' : ''}</dd></div>
+          {check.host && <div><dt>Host</dt><dd>{check.host}</dd></div>}
+        </dl>
+        {check.command && <details><summary>Command</summary><pre className="train-log">{check.command}</pre></details>}
+      </>}
+      {actionError && <p className="train-errors" role="alert">{actionError}</p>}
+      <div className="train-actions">
+        <button type="button" disabled={!request || busy !== null} onClick={() => void runCheck()}>{busy === 'check' ? 'Checking on the target…' : 'Check settings'}</button>
       </div>
-      <section className="train-panel train-checks"><h2>Pre-run checks</h2>
-        <dl className="train-details"><div><dt>Input values</dt><dd role="status">{state.checked ? 'Valid for simulation' : 'Not validated'}</dd></div>{['Execution environment / Authentication', 'GPU allocation / Active job conflicts', 'Dataset access / T_sub role / Input compatibility', 'State and action quantiles · q01 / q99', 'Output directory / Disk / Execution-host commit'].map(label => <div key={label}><dt>{label}</dt><dd>Not checked · Backend integration pending</dd></div>)}</dl>
-        {state.errors.length > 0 && <ul className="train-errors" role="alert">{state.errors.map(error => <li key={error}>{error}</li>)}</ul>}
-        <div className="train-actions"><button type="button" onClick={() => dispatch({ type: 'check' })}>Validate demo settings</button></div><p className="train-note">Validation enables the top-right Start training button for simulation only. Editing any setting requires validation again.</p>
-      </section>
-    </>}
+      <p className="train-note">Checks run on the target machine with train.sh --check. Start is enabled only after a passing check with unchanged settings.</p>
+    </section>
   </main>;
 }
 export default TrainPage;
