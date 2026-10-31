@@ -49,6 +49,7 @@ MANIFEST_SCHEMA_VERSION = 1
 # pi05 normalizes these with QUANTILES; the same rule research/train.py checks.
 # Read here directly because lab never imports research/.
 QUANTILE_FEATURES = ("observation.state", "action")
+NOT_SENT_FAKE = "not sent: fake"
 
 STATES = ("absent", "incoming", "synced", "different", "unknown")
 
@@ -94,7 +95,7 @@ def ready_root(name: str, data_base: Optional[Path] = None) -> Path:
         raise NotSendable("dataset not found")
     info = _read_json(root / "meta" / "info.json", f"{where}/meta/info.json")
     if info.get("fake") is True:
-        raise NotSendable("not sent: fake")
+        raise NotSendable(NOT_SENT_FAKE)
     try:
         stats = _read_json(root / "meta" / "stats.json", f"{where}/meta/stats.json")
     except NotSendable as e:
@@ -109,7 +110,7 @@ def ready_root(name: str, data_base: Optional[Path] = None) -> Path:
 
 def sendability(backend: Backend, name: str, data_base: Optional[Path] = None) -> Sendability:
     if backend == "fake":
-        return Sendability(False, "not sent: fake", None)
+        return Sendability(False, NOT_SENT_FAKE, None)
     try:
         return Sendability(True, None, ready_root(name, data_base))
     except NotSendable as e:
@@ -130,6 +131,9 @@ def remote_state(remote: Optional[Remote], backend: Backend, name: str,
     out = {"sendable": send.sendable, "reason": send.reason, "state": "unknown", "message": "",
            "remote_path": None, "local_fingerprint": local["fingerprint"] if local else None,
            "remote_fingerprint": None, "synced_at": None}
+    if send.reason == NOT_SENT_FAKE:
+        # Never on the host, so no remote path and no remote call.
+        return out
     if remote is None:
         out["message"] = not_configured or "GPU host not configured"
         return out

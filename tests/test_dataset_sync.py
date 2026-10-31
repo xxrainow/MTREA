@@ -519,7 +519,9 @@ def test_api_refuses_fake_unsendable_and_concurrent(base, config_file):
     with TestClient(create_app(base, remote_config=config_file, remote_transport="local")) as client:
         fake = client.post("/api/datasets/fake/demo/sync")
         assert fake.status_code == 409 and "not sent: fake" in fake.json()["detail"]
-        assert client.get("/api/datasets/fake/demo/remote").json()["reason"] == "not sent: fake"
+        fake_state = client.get("/api/datasets/fake/demo/remote").json()
+        assert fake_state["reason"] == "not sent: fake"
+        assert fake_state["remote_path"] is None and fake_state["state"] == "unknown"
         unsendable = client.post("/api/datasets/real/no_stats/sync")
         assert unsendable.status_code == 409 and "prepare_dataset" in unsendable.json()["detail"]
         assert client.post("/api/datasets/real/missing/sync").status_code == 404

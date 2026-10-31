@@ -98,10 +98,7 @@ function DatasetRemotePanel({ dataset, onOpenJob }: Props) {
           ]);
           if (controller.signal.aborted) return;
           setProgress(nextProgress);
-          if (next.status !== 'running') {
-            setJob(next);
-            void refresh(controller.signal);
-          }
+          if (next.status !== 'running') setJob(next);
         } catch {
           // A missed poll is retried on the next tick.
         }
@@ -111,7 +108,17 @@ function DatasetRemotePanel({ dataset, onOpenJob }: Props) {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [running, jobId, refresh]);
+  }, [running, jobId]);
+
+  // Its own effect: a finished job ends the polling effect above, which aborts that one's signal.
+  const finished = job !== null && !running;
+
+  useEffect(() => {
+    if (!finished) return;
+    const controller = new AbortController();
+    refresh(controller.signal);
+    return () => controller.abort();
+  }, [finished, refresh]);
 
   async function handleSync() {
     setSubmitting(true);
@@ -136,12 +143,13 @@ function DatasetRemotePanel({ dataset, onOpenJob }: Props) {
     }
   }
 
+  // Not sendable comes first: configuring a host never makes a fake dataset sendable.
   const disabledReason = !status
     ? 'Checking the GPU server…'
-    : !status.configured
-      ? `GPU server not configured: ${status.message}`
-      : remote && !remote.sendable
-        ? remote.reason ?? 'Not sendable.'
+    : remote && !remote.sendable
+      ? remote.reason ?? 'Not sendable.'
+      : !status.configured
+        ? `GPU server not configured: ${status.message}`
         : remote?.state === 'synced'
           ? 'Already synced.'
           : remote?.state === 'different'
