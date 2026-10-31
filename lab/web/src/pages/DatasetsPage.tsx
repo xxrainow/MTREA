@@ -4,12 +4,24 @@ import type { DatasetDetail, DatasetReference, DatasetSummary } from '../api/dat
 import DatasetEpisodeVideos from '../components/DatasetEpisodeVideos';
 import './DatasetsPage.css';
 import DatasetJointChart from '../components/DatasetJointChart';
+import DatasetRemotePanel from '../components/DatasetRemotePanel';
+import { loadRemoteMarkers } from '../api/remote';
+import type { RemoteMarker } from '../api/remote';
 
 type Props = {
   initialDataset?: DatasetReference | null;
+  onOpenJob?: (jobId: string) => void;
 };
 
-function DatasetsPage({ initialDataset = null }: Props) {
+const markerLabels: Record<RemoteMarker, string> = {
+  synced: 'Synced',
+  different: 'Different copy',
+  not_synced: 'Not synced',
+  not_sent_fake: 'Not sent: fake',
+  unknown: 'Unknown',
+};
+
+function DatasetsPage({ initialDataset = null, onOpenJob }: Props) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [selected, setSelected] = useState<DatasetReference | null>(initialDataset);
   const [detail, setDetail] = useState<DatasetDetail | null>(null);
@@ -20,6 +32,7 @@ function DatasetsPage({ initialDataset = null }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState('');
   const [notice, setNotice] = useState('');
+  const [markers, setMarkers] = useState<Record<string, RemoteMarker> | null>(null);
   const deleteBusy = useRef(false);
 
   useEffect(() => {
@@ -40,6 +53,14 @@ function DatasetsPage({ initialDataset = null }: Props) {
           );
           setLoadedRevision(revision);
         }
+      });
+    // Markers come from the GPU host; the list never waits for or fails on them.
+    loadRemoteMarkers(controller.signal)
+      .then((next) => {
+        if (!controller.signal.aborted) setMarkers(next);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setMarkers(null);
       });
     return () => controller.abort();
   }, [revision, selected]);
@@ -170,6 +191,7 @@ function DatasetsPage({ initialDataset = null }: Props) {
                   <th scope="col">Episodes</th>
                   <th scope="col">Frames</th>
                   <th scope="col">Metadata</th>
+                  <th scope="col">GPU server</th>
                   <th scope="col">Actions</th>
                 </tr>
               </thead>
@@ -196,6 +218,11 @@ function DatasetsPage({ initialDataset = null }: Props) {
                     <td>{dataset.total_frames ?? '—'}</td>
                     <td>
                       {dataset.issues.length ? 'Needs attention' : 'Available'}
+                    </td>
+                    <td>
+                      <span className={`datasets-remote-marker is-${markers?.[dataset.id] ?? 'unknown'}`}>
+                        {markers ? markerLabels[markers[dataset.id] ?? 'unknown'] : '—'}
+                      </span>
                     </td>
                     <td>
                       <button
@@ -304,6 +331,11 @@ function DatasetsPage({ initialDataset = null }: Props) {
           <dd>{dataset.cameras.join(', ') || 'Not recorded'}</dd>
         </div>
       </dl>
+      <DatasetRemotePanel
+        key={dataset.id}
+        dataset={dataset}
+        onOpenJob={onOpenJob}
+      />
       {!detail && !error && <p role="status">Loading episode metadata…</p>}
       {detail && (
         <div className="datasets-browser">
