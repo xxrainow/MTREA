@@ -16,9 +16,16 @@ from lab.server import camera_api
 from lab.core.collection import CollectionService
 from lab.server import collection_api
 from lab.server import datasets_api
+from lab.server import remote_api
 
 
-def create_app(data_base: Path | None = None) -> FastAPI:
+def create_app(
+    data_base: Path | None = None,
+    remote_config: Path | None = None,
+    remote_transport: str = "ssh",
+) -> FastAPI:
+    """remote_config/remote_transport: robot/configs/remote.yaml over SSH unless a test overrides them."""
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         repo_root = Path(__file__).resolve().parents[2]
@@ -42,6 +49,9 @@ def create_app(data_base: Path | None = None) -> FastAPI:
         )
         app.state.collection_gate = Lock()
         app.state.data_base = resolved_data
+        app.state.remote_config = remote_config
+        app.state.remote_transport = remote_transport
+        app.state.remote_cache = remote_api.TtlCache()
 
         try:
             yield
@@ -78,6 +88,7 @@ def create_app(data_base: Path | None = None) -> FastAPI:
     application.include_router(camera_api.router)
     application.include_router(collection_api.router)
     application.include_router(datasets_api.router)
+    application.include_router(remote_api.router)
 
     return application
 
