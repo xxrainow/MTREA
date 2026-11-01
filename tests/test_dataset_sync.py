@@ -404,6 +404,31 @@ def test_rsync_argv(tmp_path):
     assert argv[9] == "lab@gpu.tailnet.ts.net:/data/my data/datasets/.incoming/pick_v1/"  # -s: no remote re-splitting
 
 
+@pytest.mark.parametrize(("local_help", "remote_help", "expected"), [
+    (b"--info=FLAGS --protect-args", b"--info=FLAGS --secluded-args", "rsync"),
+    (b"usage: rsync [--progress]", b"--info=FLAGS --protect-args", "tar"),
+    (b"--protect-args", b"--info=FLAGS --protect-args", "tar"),
+    (b"--info=FLAGS --protect-args", b"usage: rsync [--progress]", "tar"),
+    (b"--info=FLAGS --protect-args", b"--protect-args", "tar"),
+])
+@pytest.mark.skipif(os.name == "nt", reason="rsync is disabled on Windows")
+def test_transfer_checks_rsync_options(tmp_path, monkeypatch, local_help, remote_help, expected):
+    transport = SshTransport(ssh_config())
+    monkeypatch.setattr(shutil, "which", lambda program: "/usr/bin/rsync")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw:
+                        subprocess.CompletedProcess(a, 0, local_help, b""))
+    monkeypatch.setattr(transport, "remote_has", lambda program: True)
+    monkeypatch.setattr(transport, "run", lambda *a, **kw:
+                        subprocess.CompletedProcess(a, 0, remote_help, b""))
+    calls, logs = [], []
+    monkeypatch.setattr(transport, "_rsync", lambda *a: calls.append("rsync"))
+    monkeypatch.setattr(transport, "_tar", lambda *a: calls.append("tar"))
+    assert transport.transfer(tmp_path, "/data/datasets/.incoming/pick_v1", lambda n: None, logs.append) == expected
+    assert calls == [expected]
+    if expected == "tar":
+        assert "required options" in logs[0]
+
+
 def test_ssh_commands_quote_remote_paths(monkeypatch):
     seen = []
 
@@ -426,6 +451,9 @@ def test_ssh_transport_shell_commands_run_on_a_posix_shell(base, tmp_path, monke
         def _argv(self, command):
             return ["sh", "-c", command]
     write_dataset(raw(base))
+    if sys.platform == "darwin":
+        subprocess.run(["xattr", "-w", "com.apple.metadata:mtrea_test", "sync",
+                        str(raw(base) / "meta" / "info.json")], check=True)
     config = RemoteConfig(host="h", user="u", repo_dir=str(tmp_path), data_dir=str(tmp_path / "gpu"),
                           python=sys.executable)
     transport = Loopback(config)

@@ -326,16 +326,30 @@ class SshTransport(Transport):
                          f"look for {program}")
         return cp.stdout.decode().strip() == "yes"
 
+    def _rsync_compatible(self, *, local: bool) -> bool:
+        if local:
+            try:
+                cp = subprocess.run(["rsync", "--help"], capture_output=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+        else:
+            cp = self._check(self.run("rsync --help"), "check rsync options")
+        help_text = cp.stdout + cp.stderr
+        return (cp.returncode == 0 and b"--info=" in help_text
+                and any(flag in help_text for flag in (b"--protect-args", b"--secluded-args")))
+
     def transfer(self, local_root, dest, progress, log):
         _require_incoming(dest)
         # rsync with a Windows path ("C:\...") would read "C" as a host name.
-        local = os.name != "nt" and shutil.which("rsync") is not None
-        remote = self.remote_has("rsync")
+        local = (os.name != "nt" and shutil.which("rsync") is not None
+                 and self._rsync_compatible(local=True))
+        remote = (self.remote_has("rsync") and self._rsync_compatible(local=False)) if local else False
         if local and remote:
             self._rsync(local_root, dest, progress)
             return "rsync"
-        missing = " and ".join(side for side, ok in (("this machine", local), ("the GPU host", remote)) if not ok)
-        log(f"rsync is not available on {missing}; falling back to tar over ssh "
+        missing = "this machine" if not local else "the GPU host"
+        log(f"rsync with the required options (-s, --info=progress2) is not available on {missing}; "
+            "falling back to tar over ssh "
             "(not resumable: an interrupted transfer starts over)")
         self._tar(local_root, dest, progress)
         return "tar"
@@ -370,7 +384,9 @@ class SshTransport(Transport):
     def _tar(self, local_root: Path, dest: str, progress: Progress) -> None:
         total = max(1, sum(row[1] for row in dataset_manifest.listing(str(local_root))))
         qd = shlex.quote(dest)
-        reader = self._start(["tar", "-C", str(local_root), "-cf", "-", "."], stdout=subprocess.PIPE)
+        # macOS otherwise adds AppleDouble files that change the dataset fingerprint.
+        reader = self._start(["tar", "-C", str(local_root), "-cf", "-", "."], stdout=subprocess.PIPE,
+                             env={**os.environ, "COPYFILE_DISABLE": "1"})
         writer = self._start(self._argv(f"rm -rf -- {qd} && mkdir -p {qd} && tar -C {qd} -xf -"),
                              stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         errors: list[bytes] = []

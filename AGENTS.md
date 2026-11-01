@@ -146,6 +146,11 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
   name is refused, never overwritten: a changed dataset gets a new name. Only
   `data/datasets/<name>`, or `data/raw/<name>` with q01/q99 stats, is sendable;
   fake datasets never are.
+- Dataset sync uses rsync only when both sides support protected arguments and
+  `--info=progress2`; missing or incompatible rsync (including macOS openrsync)
+  uses tar over SSH. Tar transfers restart after interruption.
+  Tar runs with `COPYFILE_DISABLE=1` to avoid macOS AppleDouble sidecar files
+  changing the remote fingerprint.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.
 - Devices and Collect share the backend camera preview service. Page changes do not stop preview. A camera frame-read failure stops all preview cameras and exposes an error in status; reconnecting requires an explicit start.
