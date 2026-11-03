@@ -22,6 +22,8 @@ class JobKind(str, Enum):
     SERVE_POLICY = "serve_policy"
     CONVERT = "convert"
     SYNC = "sync"
+    MERGE = "merge"
+    EDIT = "edit"
 
 
 class JobStatus(str, Enum):

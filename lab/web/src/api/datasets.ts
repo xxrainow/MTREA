@@ -74,3 +74,53 @@ export function deleteDataset(dataset: DatasetSummary) {
     { method: 'DELETE' },
   );
 }
+
+export type MergeSelection = {
+  backend: DatasetSummary['backend'];
+  sources: string[];
+  name: string;
+};
+
+export type MergeCheck = MergeSelection & {
+  episodes: number;
+  total_frames: number | null;
+  location: string;
+  source_versions: string[];
+};
+
+export function checkDatasetMerge(selection: MergeSelection) {
+  return hardwareRequest<MergeCheck>('/api/datasets/merge/check', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selection),
+  });
+}
+
+export function startDatasetMerge(checked: MergeCheck) {
+  return hardwareRequest<{ job: import('./remote').SyncJob; output: DatasetReference }>('/api/datasets/merge', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(checked),
+  });
+}
+
+export type DatasetEdit = { name: string; instructions: Record<string, string> };
+export type DatasetEditCheck = DatasetEdit & {
+  backend: DatasetSummary['backend'];
+  source: string;
+  source_version: string;
+  episodes: number;
+  location: string;
+};
+
+export function checkDatasetEdit(dataset: DatasetReference, edit: DatasetEdit) {
+  return hardwareRequest<DatasetEditCheck>(
+    `/api/datasets/${dataset.backend}/${encodeURIComponent(dataset.name)}/edit/check`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(edit) },
+  );
+}
+
+export function startDatasetEdit(dataset: DatasetReference, checked: DatasetEditCheck) {
+  return hardwareRequest<{ job: import('./remote').SyncJob; output: DatasetReference }>(
+    `/api/datasets/${dataset.backend}/${encodeURIComponent(dataset.name)}/edit`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checked) },
+  );
+}

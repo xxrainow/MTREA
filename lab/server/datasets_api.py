@@ -1,5 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request, Path
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+
+from lab.core.dataset_edit import check_edit, edit_command
+from lab.core.dataset_merge import check_merge, merge_command
+from lab.core.dataset_manifest import ManifestError
 
 from lab.core.datasets import Backend, DatasetDetail, DatasetSummary, get_dataset, list_datasets
 from lab.core.dataset_video import EpisodeVideo, episode_videos, episode_video_file
@@ -19,6 +24,51 @@ router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 @router.get("", response_model=list[DatasetSummary])
 def dataset_list(request: Request) -> list[DatasetSummary]:
     return list_datasets(request.app.state.data_base)
+
+
+class MergeRequest(BaseModel):
+    backend: Backend
+    sources: list[str] = Field(min_length=2, max_length=50)
+    name: str
+    source_versions: list[str] | None = None
+
+
+def _check_merge(body: MergeRequest, request: Request) -> dict:
+    try:
+        checked = check_merge(body.backend, body.sources, body.name, request.app.state.data_base)
+        if body.source_versions is not None and body.source_versions != checked["source_versions"]:
+            raise ValueError("Source datasets changed after review; check the selection again")
+        return checked
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except (ValueError, ManifestError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except (OSError, ImportError) as exc:
+        raise HTTPException(status_code=503, detail=f"Cannot check merge: {exc}") from None
+
+
+@router.post("/merge/check")
+def dataset_merge_check(body: MergeRequest, request: Request) -> dict:
+    return _check_merge(body, request)
+
+
+@router.post("/merge", status_code=202)
+def dataset_merge(body: MergeRequest, request: Request) -> dict:
+    state = request.app.state
+    with state.collection_gate:
+        if state.collection.is_active():
+            raise HTTPException(status_code=409, detail="Stop collection before merging datasets")
+        if body.source_versions is None:
+            raise HTTPException(status_code=422, detail="Check the merge before submitting")
+        checked = _check_merge(body, request)
+        spec = JobSpec(kind=JobKind.MERGE, cmd=merge_command(checked, state.data_base),
+                       label=f"merge {body.backend}/{body.name}")
+        with state.runner_lock:
+            try:
+                job = state.runner.submit(spec)
+            except JobConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"job": job.to_dict(), "output": {"backend": body.backend, "name": body.name}}
 
 
 @router.get("/{backend}/{name}", response_model=DatasetDetail)
@@ -169,3 +219,49 @@ def dataset_sync(backend: Backend, name: str, request: Request) -> dict:
             raise HTTPException(status_code=409, detail=str(exc)) from None
     state.remote_cache.clear()
     return job.to_dict()
+
+
+class DatasetEditRequest(BaseModel):
+    name: str
+    instructions: dict[str, str]
+    source_version: str | None = None
+
+
+def _check_edit(backend: Backend, source: str, body: DatasetEditRequest, request: Request) -> dict:
+    try:
+        checked = check_edit(backend, source, body.name, body.instructions, request.app.state.data_base)
+        if body.source_version is not None and body.source_version != checked["source_version"]:
+            raise ValueError("Dataset changed after review; reload and check again")
+        return checked
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except (ValueError, ManifestError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except (OSError, ImportError) as exc:
+        raise HTTPException(status_code=503, detail=f"Cannot check dataset edit: {exc}") from None
+
+
+@router.post("/{backend}/{name}/edit/check")
+def dataset_edit_check(backend: Backend, name: str, body: DatasetEditRequest, request: Request) -> dict:
+    return _check_edit(backend, name, body, request)
+
+
+@router.post("/{backend}/{name}/edit", status_code=202)
+def dataset_edit(backend: Backend, name: str, body: DatasetEditRequest, request: Request) -> dict:
+    state = request.app.state
+    with state.collection_gate:
+        if state.collection.is_active():
+            raise HTTPException(status_code=409, detail="Stop collection before editing datasets")
+        if body.source_version is None:
+            raise HTTPException(status_code=422, detail="Check the edit before submitting")
+        checked = _check_edit(backend, name, body, request)
+        with state.runner_lock:
+            try:
+                spec = JobSpec(kind=JobKind.EDIT, cmd=edit_command(checked, state.data_base),
+                               label=f"edit {backend}/{body.name}")
+                job = state.runner.submit(spec)
+            except JobConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            except (ValueError, OSError) as exc:
+                raise HTTPException(status_code=503, detail=f"Cannot start dataset edit: {exc}") from None
+        return {"job": job.to_dict(), "output": {"backend": backend, "name": body.name}}

@@ -31,6 +31,8 @@ _EXCLUSIVE: dict[JobKind, set[JobKind]] = {
     JobKind.NORM_STATS: {JobKind.TRAIN, JobKind.NORM_STATS},
     JobKind.SERVE_POLICY: {JobKind.SERVE_POLICY},
     JobKind.SYNC: {JobKind.SYNC},
+    JobKind.MERGE: {JobKind.MERGE, JobKind.EDIT},
+    JobKind.EDIT: {JobKind.EDIT, JobKind.MERGE},
 }
 
 

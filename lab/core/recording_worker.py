@@ -179,6 +179,18 @@ def recording_hooks(
 
     observations = []
     first = True
+    pending_reset = None
+
+    def run_phase(args, kwargs, phase, duration):
+        writer.stage(phase, duration)
+        with recording_commands(
+            command_root,
+            phase=phase,
+            episode=writer.current,
+            events=events,
+            phase_id=writer.phase_id,
+        ):
+            return original_loop(*args, **kwargs)
 
     def make_robot(config):
         if events["stop_recording"]:
@@ -197,7 +209,7 @@ def recording_hooks(
         return robot
 
     def loop(*args, **kwargs):
-        nonlocal first
+        nonlocal first, pending_reset
 
         bound = signature.bind(*args, **kwargs)
         dataset = bound.arguments.get("dataset")
@@ -226,32 +238,35 @@ def recording_hooks(
         if events["stop_recording"]:
             raise KeyboardInterrupt
 
+        # LeRobot requests reset before save. Defer normal resets until the
+        # native save succeeds; retries still reset before clearing the buffer.
+        if dataset is None and not events["rerecord_episode"]:
+            pending_reset = (args, kwargs, duration)
+            return None
+
         phase = (
             "recording"
             if dataset is not None
             else "resetting"
         )
-        writer.stage(phase, duration)
+        result = run_phase(args, kwargs, phase, duration)
 
-        with recording_commands(
-            command_root,
-            phase=phase,
-            episode=writer.current,
-            events=events,
-            phase_id=writer.phase_id,
-        ):
-            result = original_loop(*args, **kwargs)
-
-        if dataset is not None:
+        if dataset is not None and not events["rerecord_episode"]:
             writer.stage("saving")
 
         return result
 
     def save(dataset, *args, **kwargs):
+        nonlocal pending_reset
         writer.stage("saving")
         result = original_save(dataset, *args, **kwargs)
         writer.saved += 1
         writer.stage("saving")
+        reset = pending_reset
+        pending_reset = None
+        if reset is not None and not events["stop_recording"]:
+            reset_args, reset_kwargs, duration = reset
+            run_phase(reset_args, reset_kwargs, "resetting", duration)
         return result
 
     module.record_loop = loop

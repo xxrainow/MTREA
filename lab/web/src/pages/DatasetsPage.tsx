@@ -3,6 +3,8 @@ import { deleteDataset, loadDataset, loadDatasets } from '../api/datasets';
 import type { DatasetDetail, DatasetReference, DatasetSummary } from '../api/datasets';
 import DatasetEpisodeVideos from '../components/DatasetEpisodeVideos';
 import './DatasetsPage.css';
+import DatasetEditDialog from '../components/DatasetEditDialog';
+import DatasetMergeDialog from '../components/DatasetMergeDialog';
 import DatasetJointChart from '../components/DatasetJointChart';
 import DatasetRemotePanel from '../components/DatasetRemotePanel';
 import { loadRemoteMarkers } from '../api/remote';
@@ -34,6 +36,8 @@ function DatasetsPage({ initialDataset = null, onOpenJob }: Props) {
   const [notice, setNotice] = useState('');
   const [markers, setMarkers] = useState<Record<string, RemoteMarker> | null>(null);
   const deleteBusy = useRef(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     if (selected !== null) return;
@@ -88,6 +92,10 @@ function DatasetsPage({ initialDataset = null, onOpenJob }: Props) {
   }, [selected]);
 
   function selectDataset(dataset: DatasetSummary) {
+    setMergeOpen(false);
+    setEditOpen(false);
+    setDeleteError('');
+    setNotice('');
     setDetail(null);
     setError('');
     setEpisodeIndex(0);
@@ -102,7 +110,7 @@ function DatasetsPage({ initialDataset = null, onOpenJob }: Props) {
   }
 
   async function handleDelete(dataset: DatasetSummary) {
-    if (deleteBusy.current || loadedRevision !== revision) return;
+    if (deleteBusy.current || (selected === null && loadedRevision !== revision)) return;
 
     const confirmed = window.confirm(
       `Delete "${dataset.name}" (${dataset.backend.toUpperCase()})?\n\n` +
@@ -122,6 +130,12 @@ function DatasetsPage({ initialDataset = null, onOpenJob }: Props) {
 
       setDatasets((current) => current.filter((item) => item.id !== result.id));
 
+      if (selected !== null) {
+        setSelected(null);
+        setDetail(null);
+        setMergeOpen(false);
+        setEditOpen(false);
+      }
       setNotice(
         `"${dataset.name}" was removed. Files preserved at ${result.archive_location}.`,
       );
@@ -295,10 +309,24 @@ function DatasetsPage({ initialDataset = null, onOpenJob }: Props) {
           <h1>{dataset.name}</h1>
           <p>Saved recording metadata and episode instructions</p>
         </div>
-        <span className={`datasets-mode is-${dataset.backend}`}>
-          {dataset.backend.toUpperCase()}
-        </span>
+        <div className="datasets-heading-actions">
+          <span className={`datasets-mode is-${dataset.backend}`}>
+            {dataset.backend.toUpperCase()}
+          </span>
+          <button type="button" className="datasets-button" disabled={deletingId !== null || !!dataset.issues.length || !detail.tasks.length} onClick={() => setEditOpen(true)}>
+            Edit
+          </button>
+          <button type="button" className="datasets-button merge-primary" disabled={deletingId !== null || !!dataset.issues.length || !dataset.episodes} onClick={() => setMergeOpen(true)}>
+            ⑂ Merge datasets
+          </button>
+          <button type="button" className="datasets-button datasets-delete-button" disabled={deletingId !== null} onClick={() => void handleDelete(dataset)}>
+            {deletingId === dataset.id ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
       </div>
+      {editOpen && <DatasetEditDialog key={dataset.id} detail={detail} onClose={() => setEditOpen(false)} onOpenDataset={selectDataset} onOpenJob={onOpenJob} />}
+      {mergeOpen && <DatasetMergeDialog key={dataset.id} dataset={dataset} onClose={() => setMergeOpen(false)} onOpenDataset={selectDataset} onOpenJob={onOpenJob} />}
+      {deleteError && <p className="datasets-error" role="alert">{deleteError}</p>}
       {error && (
         <p className="datasets-error" role="alert">
           {error}

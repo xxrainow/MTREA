@@ -86,6 +86,8 @@ def test_retry_first_and_last_episode_preserves_saved_data(collection, reset):
 
         if episode == 1 and reset:
             resetting = wait_for(client, "resetting", episode)
+            assert resetting["saved_episodes"] == 1
+            assert len((root / "meta/episodes.jsonl").read_text().splitlines()) == 1
             assert command(client, resetting, "start_episode").status_code == 202
 
     wait_for(client, "completed", 2)
@@ -132,3 +134,20 @@ def test_stop_during_retry_reset_keeps_previous_saved_episode(collection):
     )
     assert state.remaining_episodes == 1
     assert state.resume
+
+
+@pytest.mark.parametrize("stop_phase", ["saving", "resetting"])
+def test_stop_after_normal_recording_keeps_episode(collection, stop_phase):
+    client, app, root = collection
+    start(client, 30)
+    first = wait_for(client, "recording", 1)
+    assert command(client, first, "finish_episode").status_code == 202
+    status = wait_for(client, stop_phase, 1)
+    assert status["saved_episodes"] == (1 if stop_phase == "resetting" else 0)
+    assert client.post("/api/collection/stop").status_code == 200
+    app.state.collection._worker.join(timeout=3)
+    final = client.get("/api/collection/status").json()
+    assert final["phase"] == "finished", final
+    assert final["saved_episodes"] == 1
+    assert final["error"] is None
+    assert len((root / "meta/episodes.jsonl").read_text().splitlines()) == 1
