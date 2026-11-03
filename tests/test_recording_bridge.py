@@ -52,9 +52,13 @@ def test_hooks_prepare_record_reset_and_count_successful_saves(tmp_path, monkeyp
         assert calls[:2] == [(False, 0.02), (True, 4)]
         assert reader.progress()["episode_phase"] == "saving"
         module.record_loop(robot=robot, events=events, control_time_s=2)
-        assert reader.progress()["episode_phase"] == "resetting"
+        assert reader.progress()["episode_phase"] == "saving"
+        assert calls == [(False, 0.02), (True, 4)]
         assert reader.progress()["saved_episodes"] == 0
         dataset.save_episode()
+        assert calls == [(False, 0.02), (True, 4), "saved", (False, 2)]
+        assert reader.progress()["episode_phase"] == "resetting"
+        assert reader.progress()["current_episode"] == 1
         assert reader.progress()["saved_episodes"] == 1
         module.record_loop(robot=robot, events=events, dataset=dataset, control_time_s=4)
         assert reader.progress()["current_episode"] == 2
@@ -71,6 +75,50 @@ def test_stop_during_preparation_never_enters_recording(tmp_path):
             module.record_loop(robot=robot, events=events, dataset=module.LeRobotDataset(), control_time_s=4)
     assert len(calls) == 1
     assert writer.saved == 0
+
+
+def test_failed_save_never_runs_deferred_reset(tmp_path):
+    module, robot, events, calls = recorder_module()
+
+    def fail_save(self):
+        raise OSError("Disk full")
+
+    module.LeRobotDataset.save_episode = fail_save
+    writer = TelemetryWriter(tmp_path)
+    with recording_hooks(module, writer, SimpleNamespace(submit=lambda _: None), events):
+        dataset = module.LeRobotDataset()
+        module.record_loop(robot=robot, events=events, dataset=dataset, control_time_s=4)
+        module.record_loop(robot=robot, events=events, control_time_s=2)
+        with pytest.raises(OSError, match="Disk full"):
+            dataset.save_episode()
+    assert (False, 2) not in calls
+    assert writer.saved == 0
+
+
+@pytest.mark.parametrize("retry", [False, True])
+def test_stop_in_reset_preserves_only_successful_take(tmp_path, retry):
+    module, robot, events, calls = recorder_module()
+    original_loop = module.record_loop
+
+    def loop(robot, events, dataset=None, control_time_s=1):
+        original_loop(robot, events, dataset, control_time_s)
+        if dataset is not None:
+            events["rerecord_episode"] = retry
+        elif control_time_s == 2:
+            events["stop_recording"] = True
+
+    module.record_loop = loop
+    writer = TelemetryWriter(tmp_path)
+    with recording_hooks(module, writer, SimpleNamespace(submit=lambda _: None), events):
+        dataset = module.LeRobotDataset()
+        module.record_loop(robot=robot, events=events, dataset=dataset, control_time_s=4)
+        module.record_loop(robot=robot, events=events, control_time_s=2)
+        if not retry:
+            dataset.save_episode()
+        assert events["stop_recording"]
+        assert writer.saved == (0 if retry else 1)
+        assert calls[-1] == (False, 2)
+        assert calls.count("saved") == (0 if retry else 1)
 
 
 def test_hooks_keep_lerobot_image_writer_decorator(tmp_path):

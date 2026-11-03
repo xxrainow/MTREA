@@ -39,8 +39,8 @@ def test_fake_honors_phase_durations_and_does_not_save_twice(tmp_path):
     assert recording.wait() == 0
     assert recording.wait() == 0
     assert stages == [
-        ("preparing", 0.01), ("recording", 0.02), ("resetting", 0.03),
-        ("saving", 0.0), ("recording", 0.02), ("saving", 0.0),
+        ("preparing", 0.01), ("recording", 0.02), ("saving", 1.0),
+        ("resetting", 0.03), ("recording", 0.02), ("saving", 1.0),
         ("completed", 0.0),
     ]
     progress = recording.progress()
@@ -190,8 +190,13 @@ def test_fake_command_api_advances_two_episodes_without_hardware(tmp_path, monke
         assert command(first, "finish_episode", expected_episode=2).status_code == 409
         assert command(first, "finish_episode").status_code == 202
 
+        saving = wait_for("saving", 1)
+        assert saving["saved_episodes"] == 0
+        assert saving["phase_duration_s"] == 1.0
+        assert command(saving, "start_episode").status_code == 422
+
         resetting = wait_for("resetting", 1)
-        assert resetting["saved_episodes"] == 0
+        assert resetting["saved_episodes"] == 1
         assert command(resetting, "start_episode").status_code == 202
 
         second = wait_for("recording", 2)

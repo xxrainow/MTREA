@@ -21,6 +21,7 @@ def fake_collection_enabled() -> bool:
 
 class FakeRecordingProcess:
     PREPARATION_SECONDS = 3.0
+    SAVING_SECONDS = 1.0
 
     def __init__(self, command: list[str]) -> None:
         self.recording_id = uuid4().hex
@@ -185,15 +186,13 @@ class FakeRecordingProcess:
                 retry = self._retry_requested
                 self._retry_requested = False
 
-            if index < count - 1 or retry:
-                self._stage("resetting", float(self._args["dataset.reset_time_s"]))
-
             if retry:
-                if self._stop.is_set():
+                if not self._stage("resetting", float(self._args["dataset.reset_time_s"])):
                     break
                 continue
 
-            self._stage("saving")
+            # Simulate save latency so the web's status polling can show it.
+            self._stage("saving", self.SAVING_SECONDS)
             episode = {
                 "episode_index": len(episodes),
                 "tasks": [instruction],
@@ -208,6 +207,9 @@ class FakeRecordingProcess:
             index += 1
             if self._stop.is_set():
                 break
+            if index < count:
+                if not self._stage("resetting", float(self._args["dataset.reset_time_s"])):
+                    break
 
     @staticmethod
     def _write_info(path: Path, count: int) -> None:
