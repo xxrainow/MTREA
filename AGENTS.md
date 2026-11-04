@@ -49,6 +49,9 @@ scripts/train.sh --method=h0 --dataset=<repo_id> --output=data/runs/h0_pickplace
 scripts/train.sh --describe                       # JSON: methods, options, run files (for lab's Train page)
 scripts/train.sh <run flags> --check              # JSON preflight, writes nothing; exit 0 ok, 2 failed
 scripts/train.sh <run flags> --fake               # fake lerobot-train: no GPU, synthetic losses
+python -m research.infer_offline --checkpoint=<dir> --dataset-root=<dir> --samples=50 --seed=0 --out=<report.json> [--compare=lerobot/pi05_base]
+scripts/serve_policy.sh --checkpoint=<dir or hub id> [--fake=hold|replay --dataset-root=<dir>]    # docs/SERVING.md
+python -m research.serve_client_check --server=127.0.0.1:<port> --checkpoint=<same string> --dataset-root=<dir> --episodes=2
 ```
 
 Wrapper scripts live in top-level `scripts/*.sh` (not `research/scripts/`).
@@ -153,6 +156,20 @@ Only deviations from ordinary Python practice are listed; the rest is standard.
   changing the remote fingerprint.
 - Never bind the policy server to 0.0.0.0 — it must be 127.0.0.1 behind an SSH
   tunnel.
+- Serving (docs/SERVING.md is the robot side's contract): one checkpoint per
+  `scripts/serve_policy.sh` run, chosen at start and never by the client. It
+  speaks LeRobot's async inference protocol unchanged; `research/serve_backend.py`
+  subclasses PolicyServer, and SendPolicyInstructions only compares, refusing with
+  every mismatch named. The client's pretrained_name_or_path must equal the
+  server's checkpoint string. Serving and training never share the GPU slice: more
+  than 1 GiB in use on the device exits "GPU busy". PI05Policy.from_pretrained
+  returns random weights on a load failure, reporting it only with a print, so
+  `load_policy` refuses unless it prints that all keys loaded. Importing lerobot's
+  PolicyServer or RobotClient creates `logs/` under the working directory, so import
+  them inside `lerobot_log_dir()`. Sessions in
+  `<data_dir>/rollouts/serve/<session>/` are append-only records, like rollouts.
+  The gripper is 0-100, not degrees. Physically swapped cameras cannot be detected:
+  the protocol carries names and shapes only.
 - Devices and Collect share the backend camera preview service. Page changes do not stop preview. A camera frame-read failure stops all preview cameras and exposes an error in status; reconnecting requires an explicit start.
 - Collect opens a dedicated recording workspace. Both modes have a 3-second preparation phase. Fake illustrations are explicitly simulated. Real web collection runs `lab.core.recording_worker` in the server's Python environment, wrapping installed LeRobot 0.6.0/0.6.1 recording hooks to report phase timing and publish existing observation frames. It retains LeRobot dataset writing/finalization. Temporary latest-frame IPC is bounded, JPEG encoding runs outside the control loop, stale frames are rejected, and files are removed after exit. Recording owns cameras exclusively; standalone preview is stopped before collection starts. CLI collection keeps its ordinary `lerobot-record` path. Real hardware end-to-end validation remains required.
 - Collect retains timed episode/reset settings, with no separate manual mode. Real recording controls can end preparation, recording, or reset early through the command API and temporary command-file IPC; Fake simulates the same phase advances with an in-memory event and writes metadata only. During recording, Discard & retry confirms discarding the current unsaved take, runs reset, and repeats the same episode without changing previously saved data. Real recording uses LeRobot's rerecord flag and buffer cleanup; Fake omits the discarded take from metadata. Every phase has a new phase_id, required by commands, so stale requests and button locks do not carry into a repeated attempt even with zero reset duration. A queued response is not execution confirmation; the web waits for the reported phase ID to change before allowing another command. Web collection saves successful episodes before reset in both backends; the real adapter defers LeRobot's normal reset call until native saving succeeds. Retry still resets without saving the discarded take. Fake simulates one second of saving latency so status polling can display Saving; stop interrupts this delay but still completes the pending metadata save. Real saving has no artificial delay. Reset keeps its timer and Start shortcut; the last successful episode skips reset. CLI collection retains LeRobot's original order. Whole-session stop remains separate.
