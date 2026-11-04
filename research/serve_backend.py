@@ -24,6 +24,7 @@ import contextlib
 import io
 import pickle  # nosec: the protocol itself; the host is loopback only (serve_common.is_loopback)
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -32,12 +33,14 @@ import grpc
 import torch
 
 from lerobot.async_inference.configs import PolicyServerConfig
-from lerobot.async_inference.helpers import RemotePolicyConfig, TimedAction, TimedObservation
+from lerobot.async_inference.helpers import (RemotePolicyConfig, TimedAction, TimedObservation,
+                                             extract_state_from_raw_observation, make_lerobot_observation)
 from lerobot.async_inference.policy_server import PolicyServer
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.transport import services_pb2  # type: ignore
 
-from research.serve_common import STATE_KEY, ServedPolicy, instruction_mismatches, lerobot_features_for
+from research.serve_common import (STATE_KEY, DemoDataset, ServedPolicy, instruction_mismatches,
+                                   lerobot_features_for)
 
 # Printed by PI05Policy.from_pretrained. On any load failure, a strict key mismatch
 # included, it prints a warning and returns a randomly initialized model, so this
@@ -231,6 +234,59 @@ class PolicyBackend(PolicyServer):
             self.recorder.chunk(observation_t, chunk, self.last_timing)
 
 
+class FakePolicyBackend(PolicyBackend):
+    """Same protocol and same refusals; no model, and nothing that needs a GPU.
+
+    `hold` repeats the observed joint positions, so the robot stays where it is.
+    `replay` returns the recorded action of each timestep of one episode, then
+    holds that episode's last action. It keys on the timestep instead of a cursor
+    because chunks overlap: robot_client asks again when half a chunk is left, and
+    a cursor would skip half of every chunk. Each Ready moves to the next episode.
+    """
+
+    def __init__(self, config: PolicyServerConfig, served: ServedPolicy, mode: str,
+                 dataset: Optional[DemoDataset] = None, recorder=None):
+        super().__init__(config, served, recorder)
+        self.mode = mode
+        self.dataset = dataset
+        self._ready_count = 0
+        self.replay_episode: Optional[int] = None
+        self._lock = threading.Lock()
+
+    def Ready(self, request, context):  # noqa: N802
+        if self.dataset is not None:
+            with self._lock:
+                self.replay_episode = self.dataset.episodes[self._ready_count % len(self.dataset.episodes)]
+                self._ready_count += 1
+        return super().Ready(request, context)
+
+    def _hold_actions(self, observation_t: TimedObservation) -> torch.Tensor:
+        frame = make_lerobot_observation(observation_t.get_observation(), self.lerobot_features)
+        state = extract_state_from_raw_observation(frame).reshape(-1).to(torch.float32)
+        return state.repeat(self.actions_per_chunk, 1)
+
+    def _replay_actions(self, observation_t: TimedObservation) -> torch.Tensor:
+        length = self.dataset.episode_length(self.replay_episode)
+        frame = min(observation_t.get_timestep(), length - 1)
+        recorded = self.dataset.actions_from(self.replay_episode, frame, self.actions_per_chunk)
+        actions = torch.as_tensor(recorded, dtype=torch.float32)
+        if len(actions) < self.actions_per_chunk:
+            padding = actions[-1:].repeat(self.actions_per_chunk - len(actions), 1)
+            actions = torch.cat([actions, padding])
+        return actions
+
+    def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
+        start = time.perf_counter()
+        actions = self._replay_actions(observation_t) if self.mode == "replay" else self._hold_actions(observation_t)
+        self.last_processed_obs = observation_t
+        chunk = self._time_action_chunk(observation_t.get_timestamp(), list(actions), observation_t.get_timestep())
+        elapsed = (time.perf_counter() - start) * 1000
+        self.last_timing = {"prepare_ms": 0.0, "preprocess_ms": 0.0, "inference_ms": elapsed, "postprocess_ms": 0.0,
+                            "total_ms": elapsed}
+        self._record(observation_t, chunk)
+        return chunk
+
+
 def build_backend(served: ServedPolicy, config_dir: Path, device: str, fps: int, *, weights: Optional[str] = None,
                   recorder=None, host: str = "127.0.0.1", port: int = 8000) -> PolicyBackend:
     """A real backend, policy loaded and on its device. Warmup is the caller's call."""
@@ -239,3 +295,9 @@ def build_backend(served: ServedPolicy, config_dir: Path, device: str, fps: int,
     backend = PolicyBackend(config, served, recorder)
     backend.attach(*load_policy(config_dir, device, weights), device)
     return backend
+
+
+def build_fake_backend(served: ServedPolicy, mode: str, dataset: Optional[DemoDataset], fps: int, *,
+                       recorder=None, host: str = "127.0.0.1", port: int = 8000) -> FakePolicyBackend:
+    config = PolicyServerConfig(host=host, port=port or 1, fps=fps)
+    return FakePolicyBackend(config, served, mode, dataset, recorder)
