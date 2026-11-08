@@ -157,6 +157,16 @@ class RemoteConfig:
         command = remote_command if isinstance(remote_command, str) else shlex.join(remote_command)
         return [*self.ssh_options(), f"{self.user}@{self.host}", "--", command]
 
+    def policy_tunnel_argv(self) -> list[str]:
+        from robot.config import POLICY_SERVER_HOST, POLICY_SERVER_PORT
+
+        if self.policy_port is None or not 1 <= self.policy_port <= 65535:
+            raise RemoteNotConfigured("Set policy_port in remote.yaml (see docs/SERVING.md)")
+        forward = f"{POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}:127.0.0.1:{self.policy_port}"
+        return [*self.ssh_options(), "-N", "-T", "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
+                "-L", forward, f"{self.user}@{self.host}"]
+
     def remote_prefix(self) -> str:
         """Shell prefix for job commands; see the module docstring."""
         bin_dir = posixpath.dirname(self.python)

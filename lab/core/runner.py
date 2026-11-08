@@ -27,9 +27,10 @@ class JobConflict(RuntimeError):
 # compete for the single GPU, so they exclude each other. One dataset sync at
 # a time keeps the GPU host's .incoming/ free of concurrent writers.
 _EXCLUSIVE: dict[JobKind, set[JobKind]] = {
-    JobKind.TRAIN: {JobKind.TRAIN, JobKind.NORM_STATS},
-    JobKind.NORM_STATS: {JobKind.TRAIN, JobKind.NORM_STATS},
-    JobKind.SERVE_POLICY: {JobKind.SERVE_POLICY},
+    JobKind.TRAIN: {JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY},
+    JobKind.NORM_STATS: {JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY},
+    JobKind.SERVE_POLICY: {JobKind.SERVE_POLICY, JobKind.TRAIN, JobKind.NORM_STATS},
+    JobKind.POLICY_TUNNEL: {JobKind.POLICY_TUNNEL},
     JobKind.SYNC: {JobKind.SYNC},
     JobKind.MERGE: {JobKind.MERGE, JobKind.EDIT},
     JobKind.EDIT: {JobKind.EDIT, JobKind.MERGE},
@@ -106,6 +107,14 @@ class Runner:
 
             job.finished_at = datetime.now()
             self.store.save(job)
+        by_id = {job.id: job for job in jobs}
+        for job in jobs:
+            if job.spec.kind != JobKind.POLICY_TUNNEL or not job.is_active():
+                continue
+            parent = by_id.get(job.spec.metadata.get("server_job_id"))
+            if parent is not None and not parent.is_active() and not parent.unreachable:
+                self.stop(job.id)
+                job.status = JobStatus.STOPPED
         return jobs
 
     def active(self) -> list[Job]:
@@ -121,6 +130,11 @@ class Runner:
         job = self.store.get(job_id)
         if job is None:
             raise KeyError(job_id)
+        if job.spec.kind == JobKind.SERVE_POLICY:
+            for tunnel in self.store.list():
+                if (tunnel.spec.kind == JobKind.POLICY_TUNNEL and tunnel.is_active()
+                        and tunnel.spec.metadata.get("server_job_id") == job.id):
+                    self.stop(tunnel.id)
         if job.status == JobStatus.RUNNING and job.pid is not None:
             self.executors[job.spec.executor].stop(job.pid, job_id=job.id) # stop process by executor
             job.status = JobStatus.STOPPED

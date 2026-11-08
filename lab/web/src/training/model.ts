@@ -54,7 +54,7 @@ export type TrainJob = {
   id: string; status: string; pid: number | null; exit_code: number | null;
   submitted_at: string; started_at: string | null; finished_at: string | null;
   git_commit: string | null; unreachable: string | null;
-  spec: { kind: string; cmd: string; executor: 'local' | 'ssh'; label: string; run_dir: string | null; host: string | null };
+  spec: { kind: string; cmd: string; executor: 'local' | 'ssh'; label: string; run_dir: string | null; host: string | null; metadata?: Record<string, unknown> };
 };
 export type RunSummary = {
   job: TrainJob; status: RunStatusFile | null; state: RunState; checkpoint_count: number | null; unreachable: string | null;

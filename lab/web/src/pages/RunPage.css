@@ -180,6 +180,17 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.run-error {
+  color: var(--lab-text);
+  border-left: 3px solid #c66a47;
+  padding: 10px 12px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .run-note {
