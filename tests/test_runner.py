@@ -117,3 +117,94 @@ def test_ledger_is_append_only(runner: Runner, tmp_path: Path) -> None:
     _wait(runner, job.id)
     lines = paths.jobs_ledger(tmp_path).read_text().strip().splitlines()
     assert len(lines) >= 2  # RUNNING line, then DONE line — history kept
+
+
+@pytest.mark.parametrize(
+    "first_kind, second_kind",
+    [
+        (JobKind.TRAIN, JobKind.SERVE_POLICY),
+        (JobKind.SERVE_POLICY, JobKind.TRAIN),
+        (JobKind.NORM_STATS, JobKind.SERVE_POLICY),
+        (JobKind.SERVE_POLICY, JobKind.NORM_STATS),
+    ],
+)
+def test_serving_conflicts_with_other_gpu_jobs(
+    runner, first_kind, second_kind,
+):
+    first = runner.submit(
+        JobSpec(kind=first_kind, cmd=SLEEP)
+    )
+
+    try:
+        with pytest.raises(JobConflict):
+            runner.submit(
+                JobSpec(kind=second_kind, cmd=py("pass"))
+            )
+    finally:
+        runner.stop(first.id)
+        
+def test_stopping_policy_server_also_stops_its_tunnel(runner):
+    server = runner.submit(
+        JobSpec(kind=JobKind.SERVE_POLICY, cmd=SLEEP)
+    )
+    tunnel = None
+
+    try:
+        tunnel = runner.submit(
+            JobSpec(
+                kind=JobKind.POLICY_TUNNEL,
+                cmd=SLEEP,
+                metadata={"server_job_id": server.id},
+            )
+        )
+
+        runner.stop(server.id)
+
+        saved_tunnel = runner.store.get(tunnel.id)
+
+        assert saved_tunnel is not None
+        assert saved_tunnel.status == JobStatus.STOPPED
+        assert not runner.executors[Executor.LOCAL].is_running(tunnel.pid)
+
+    finally:
+        if tunnel is not None:
+            runner.stop(tunnel.id)
+        runner.stop(server.id)
+
+def test_refresh_stops_tunnel_after_policy_server_exits(runner):
+    server = runner.submit(
+        JobSpec(kind=JobKind.SERVE_POLICY, cmd=SLEEP)
+    )
+    tunnel = None
+
+    try:
+        tunnel = runner.submit(
+            JobSpec(
+                kind=JobKind.POLICY_TUNNEL,
+                cmd=SLEEP,
+                metadata={"server_job_id": server.id},
+            )
+        )
+
+        executor = runner.executors[Executor.LOCAL]
+        executor.stop(server.pid)
+
+        before = runner.store.get(tunnel.id)
+        assert before is not None
+        assert before.status == JobStatus.RUNNING
+
+        runner.refresh()
+
+        saved_server = runner.store.get(server.id)
+        saved_tunnel = runner.store.get(tunnel.id)
+
+        assert saved_server is not None
+        assert not saved_server.is_active()
+        assert saved_tunnel is not None
+        assert saved_tunnel.status == JobStatus.STOPPED
+        assert not executor.is_running(tunnel.pid)
+
+    finally:
+        if tunnel is not None:
+            runner.stop(tunnel.id)
+        runner.stop(server.id)

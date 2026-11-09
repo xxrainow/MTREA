@@ -201,8 +201,10 @@ review; nobody pushes to main directly.
   Server logs expand under the selected session; Execution logs remains reserved
   for future robot rollout logging. TypeScript and lint checks pass. Disabled
   tunnel controls for stopped sessions and requested checkpoint display were
-  verified manually. A real start attempt was refused with GPU busy; successful
-  model readiness, tunnel connectivity and dedicated tests remain unverified.
+  verified manually. Dedicated tests cover session state, error classification,
+  API refusals, GPU job exclusion and tunnel cleanup. Related serving, runner,
+  boundary and existing API tests pass. A real start attempt was refused with
+  GPU busy; successful model readiness and tunnel connectivity remain unverified.
 
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.
