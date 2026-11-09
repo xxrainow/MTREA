@@ -198,6 +198,15 @@ review; nobody pushes to main directly.
 
 - Policy server management is connected to Run & Evaluate: checkpoint selection,
   server start/stop, session polling, error display and SSH tunnel start/status.
+  Run settings expose real/hold modes on the GPU host and hold-only on this
+  machine. Local hold takes camera/joint features from a selected real recorded
+  dataset, uses no model/GPU/tunnel, and requires LeRobot async support in the
+  backend environment. Fake collection metadata is excluded. Session cards show
+  target/mode; tunnel controls apply only to SSH sessions. Dataset client checks
+  still run separately via CLI. Local hold was manually verified on macOS with
+  LeRobot 0.6.1: one 589-frame recorded episode sent 78 observations and received
+  27 action chunks with no queue stalls. This verifies local hold communication,
+  not GPU inference, SSH connectivity or physical robot execution.
   Server logs expand under the selected session; Execution logs remains reserved
   for future robot rollout logging. TypeScript and lint checks pass. Disabled
   tunnel controls for stopped sessions and requested checkpoint display were

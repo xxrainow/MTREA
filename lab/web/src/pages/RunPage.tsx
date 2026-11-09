@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { loadDatasets } from '../api/datasets';
+import type { DatasetSummary } from '../api/datasets';
 import { errorMessage } from '../api/hardware';
 import {
   loadPolicyCheckpoints,
@@ -12,6 +14,11 @@ import { loadJobLog, stopJob } from '../api/training';
 import './RunPage.css';
 
 function RunPage() {
+  const [target, setTarget] = useState<'ssh' | 'local'>('ssh');
+  const [mode, setMode] = useState<'real' | 'hold'>('real');
+  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
+  const [datasetName, setDatasetName] = useState('');
+  const [datasetError, setDatasetError] = useState('');
   const [checkpoint, setCheckpoint] = useState('');
   const [task, setTask] = useState('pick_place');
   const [instruction, setInstruction] = useState('');
@@ -85,6 +92,25 @@ function RunPage() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+
+    loadDatasets(controller.signal)
+      .then((next) => {
+        if (!controller.signal.aborted) {
+          setDatasets(next.filter((dataset) => dataset.backend === 'real'));
+          setDatasetError('');
+        }
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) {
+          setDatasetError(errorMessage(reason));
+        }
+      });
+
+    return () => controller.abort();
+  }, []);
+
   const policyRunning =
     sessions?.some(
       (session) =>
@@ -92,7 +118,9 @@ function RunPage() {
     ) ?? false;
 
   const canStartPolicy =
-    Boolean(checkpoints?.some((item) => item.job_id === checkpoint)) &&
+    (target === 'ssh'
+      ? Boolean(checkpoints?.some((item) => item.job_id === checkpoint))
+      : !datasetError && Boolean(datasets?.some((item) => item.name === datasetName))) &&
     sessions !== null &&
     !sessionError &&
     !policyRunning &&
@@ -106,10 +134,10 @@ function RunPage() {
 
     try {
       await startPolicy({
-        target: 'ssh',
-        mode: 'real',
-        source_job_id: checkpoint,
-        dataset_name: null,
+        target,
+        mode,
+        source_job_id: target === 'ssh' ? checkpoint : null,
+        dataset_name: target === 'local' ? datasetName : null,
       });
     } catch (reason) {
       setPolicyError(errorMessage(reason));
@@ -198,12 +226,19 @@ function RunPage() {
                     </div>
 
                     <p className="run-description">
-                      Checkpoint:{' '}
+                      {session.job.spec.executor === 'local' ? 'This machine' : 'GPU host (SSH)'}
+                      {' · '}
+                      {session.job.spec.metadata?.mode === 'hold'
+                        ? 'Hold · simulated responses, no model inference'
+                        : 'Real · model inference'}
+                    </p>
+                    <p className="run-description">
+                      {session.job.spec.executor === 'local' ? 'Policy identifier' : 'Checkpoint'}:{' '}
                       {session.status?.checkpoint ??
                         String(
                           session.job.spec.metadata?.checkpoint ?? 'Unknown',
                         )}
-                      {!session.status?.checkpoint && (
+                      {!session.status?.checkpoint && session.job.spec.executor === 'ssh' && (
                         <span> · requested; loading not confirmed</span>
                       )}
                     </p>
@@ -234,7 +269,9 @@ function RunPage() {
                     )}
                     <p className="run-description">
                       SSH tunnel:{' '}
-                      {session.tunnel ? session.tunnel.status : 'Not opened'}
+                      {session.job.spec.executor === 'local'
+                        ? 'Not required · local server'
+                        : session.tunnel ? session.tunnel.status : 'Not opened'}
                     </p>
 
                     {session.tunnel?.status === 'running' && (
@@ -244,6 +281,7 @@ function RunPage() {
                     )}
 
                     <div className="run-session-actions">
+                      {session.job.spec.executor === 'ssh' && (
                       <button
                         type="button"
                         className="run-button"
@@ -262,6 +300,7 @@ function RunPage() {
                           ? 'Opening tunnel…'
                           : 'Open SSH tunnel'}
                       </button>
+                      )}
                       <button
                         type="button"
                         className="run-button"
@@ -365,25 +404,98 @@ function RunPage() {
             <h2>Policy settings</h2>
 
             <label className="run-field">
-              Checkpoint
+              Run on
               <select
-                value={checkpoint}
-                onChange={(event) => setCheckpoint(event.target.value)}
+                value={target}
+                disabled={startingPolicy}
+                onChange={(event) => {
+                  const next = event.target.value as 'ssh' | 'local';
+                  setTarget(next);
+                  if (next === 'local') setMode('hold');
+                  setPolicyError('');
+                }}
               >
-                <option value="">
-                  {checkpoints === null
-                    ? 'Loading checkpoints…'
-                    : 'Select a checkpoint'}
-                </option>
-
-                {checkpoints?.map((item) => (
-                  <option key={item.job_id} value={item.job_id}>
-                    {item.label} · step {item.step}
-                  </option>
-                ))}
+                <option value="ssh">GPU host (SSH)</option>
+                <option value="local">This machine · hold only</option>
               </select>
             </label>
-            {checkpointError && <p role="alert">{checkpointError}</p>}
+
+            <label className="run-field">
+              Server mode
+              <select
+                value={mode}
+                disabled={startingPolicy}
+                onChange={(event) => setMode(event.target.value as 'real' | 'hold')}
+              >
+                <option value="real" disabled={target === 'local'}>Real · model inference</option>
+                <option value="hold">Hold · connection testing</option>
+              </select>
+            </label>
+            <p className="run-description">
+              {mode === 'hold'
+                ? 'Hold returns the joint positions sent by the client. It does not load a model or test prediction quality.'
+                : 'Real loads the selected checkpoint and uses the GPU to predict actions.'}
+            </p>
+
+            {target === 'ssh' ? (
+              <>
+                <label className="run-field">
+                  Checkpoint
+                  <select
+                    value={checkpoint}
+                    disabled={startingPolicy}
+                    onChange={(event) => setCheckpoint(event.target.value)}
+                  >
+                    <option value="">
+                      {checkpoints === null
+                        ? 'Loading checkpoints…'
+                        : 'Select a checkpoint'}
+                    </option>
+                    {checkpoints?.map((item) => (
+                      <option key={item.job_id} value={item.job_id}>
+                        {item.label} · step {item.step}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {checkpointError && <p role="alert">{checkpointError}</p>}
+              </>
+            ) : (
+              <>
+                <label className="run-field">
+                  Recorded dataset
+                  <select
+                    value={datasetName}
+                    disabled={startingPolicy}
+                    onChange={(event) => setDatasetName(event.target.value)}
+                  >
+                    <option value="">
+                      {datasets === null
+                        ? 'Loading datasets…'
+                        : 'Select a recorded dataset'}
+                    </option>
+                    {datasets?.map((dataset) => (
+                      <option key={dataset.id} value={dataset.name}>
+                        {dataset.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {datasetError && <p role="alert">{datasetError}</p>}
+                {datasets?.length === 0 && (
+                  <p className="run-description">No recorded datasets available. Fake collections cannot be used.</p>
+                )}
+                <p className="run-description">
+                  The dataset supplies camera and joint information for the test server.
+                  No GPU or SSH tunnel is needed. LeRobot with async inference support
+                  must be installed in the lab backend environment.
+                </p>
+              </>
+            )}
+            <p className="run-description">
+              Starting the server does not send test observations. Run the dataset
+              client check separately from the command line.
+            </p>
 
             <label className="run-field">
               Evaluation task
@@ -412,11 +524,11 @@ function RunPage() {
             <dl className="run-details">
               <div>
                 <dt>GPU server connection</dt>
-                <dd>Not checked</dd>
+                <dd>{target === 'local' ? 'Not required' : 'Not checked'}</dd>
               </div>
               <div>
                 <dt>SSH tunnel</dt>
-                <dd>Not checked</dd>
+                <dd>{target === 'local' ? 'Not required' : 'Not checked'}</dd>
               </div>
               <div>
                 <dt>Policy readiness</dt>
