@@ -40,6 +40,7 @@ _EXCLUSIVE: dict[JobKind, set[JobKind]] = {
     JobKind.SYNC: {JobKind.SYNC},
     JobKind.MERGE: {JobKind.MERGE, JobKind.EDIT},
     JobKind.EDIT: {JobKind.EDIT, JobKind.MERGE},
+    JobKind.ROLLOUT: {JobKind.ROLLOUT},
 }
 
 

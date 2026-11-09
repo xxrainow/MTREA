@@ -97,6 +97,23 @@ def test_exclusive_kinds_do_not_overlap(runner: Runner) -> None:
     again = runner.submit(JobSpec(kind=JobKind.TRAIN, cmd="echo ok"))
     _wait(runner, again.id)
 
+def test_rollout_jobs_do_not_overlap(runner: Runner) -> None:
+    first = runner.submit(
+        JobSpec(kind=JobKind.ROLLOUT, cmd=SLEEP)
+    )
+
+    try:
+        with pytest.raises(JobConflict):
+            runner.submit(
+                JobSpec(kind=JobKind.ROLLOUT, cmd=py("pass"))
+            )
+    finally:
+        runner.stop(first.id)
+
+    again = runner.submit(
+        JobSpec(kind=JobKind.ROLLOUT, cmd=py("pass"))
+    )
+    assert _wait(runner, again.id) == JobStatus.DONE
 
 def test_ledger_survives_restart(runner: Runner, tmp_path: Path) -> None:
     job = runner.submit(JobSpec(kind=JobKind.CONVERT, cmd="echo persisted"))
