@@ -197,10 +197,11 @@ review; nobody pushes to main directly.
 
 - Dataset detail Edit saves a new named copy; it never renames or relabels the source in place. Instructions are edited per existing task and apply to all corresponding episodes in the copy. Real v2.0/v2.1/v3.0 task and episode metadata (and any inline frame task text) are updated with task IDs, numerical data and videos preserved; duplicate resulting task labels are refused. Fake stays metadata-only. Edit runs as a local `edit` job, mutually exclusive with merge, under the hardware lock. Copies stage under `.editing/`, verify source/copy fingerprints before edits and unchanged source afterwards, then publish under the same backend raw storage. `meta/edits.jsonl` preserves provenance across successive copies. Original collection ledgers/snapshots and GPU copies are unchanged; edited copies have no resume ledger and require separate GPU sync.
 
-- Policy serving core is in progress: checkpoint selection and server job submission
-  are implemented in lab/core/serving.py. Job metadata, GPU job exclusion and SSH
-  tunnel command construction are available. Tunnel execution, session monitoring,
-  API/web integration and end-to-end validation remain outstanding.
+- Policy serving core supports checkpoint selection, server job submission,
+  SSH tunnel jobs and session status assembly. Server stop or confirmed exit
+  cleans up associated tunnels. Remote connectivity errors are reported separately
+  from file read errors. API/web integration, dedicated serving tests and
+  end-to-end validation remain outstanding.
 
 
 

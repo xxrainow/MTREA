@@ -4,6 +4,7 @@ import sys
 import os
 import shlex
 import subprocess
+import json
 
 from lab.core.datasets import dataset_root
 from robot.config import FPS, POLICY_SERVER_PORT
@@ -11,7 +12,7 @@ from robot.config import FPS, POLICY_SERVER_PORT
 from pathlib import Path, PurePosixPath
 
 from lab.core import training
-from lab.core.models import Executor, Job, JobKind, JobSpec
+from lab.core.models import Executor, Job, JobKind, JobSpec, JobStatus
 from lab.core.remote import Remote, RemoteError
 from lab.core.runner import Runner
 
@@ -182,3 +183,129 @@ def start(
             },
         )
     )
+
+def start_tunnel(
+    job: Job,
+    runner: Runner,
+    remote: Remote | None,
+) -> Job:
+    if (
+        job.spec.kind != JobKind.SERVE_POLICY
+        or job.spec.executor != Executor.SSH
+        or not job.is_active()
+    ):
+        raise ValueError("A running GPU policy server is required")
+
+    if remote is None or remote.label != job.spec.host:
+        raise ValueError(
+            "The GPU host configuration does not match this session"
+        )
+
+    if remote.config.policy_port != job.spec.metadata.get("server_port"):
+        raise ValueError(
+            "The policy port changed; stop this session and start a new one"
+        )
+
+    argv = remote.config.policy_tunnel_argv()
+
+    return runner.submit(
+        JobSpec(
+            kind=JobKind.POLICY_TUNNEL,
+            cmd=command(argv),
+            executor=Executor.LOCAL,
+            label=f"Tunnel · {job.spec.label}",
+            metadata={
+                "server_job_id": job.id,
+            },
+        )
+    )
+
+def read_session_files(job: Job, remote: Remote | None) -> dict:
+    if job.spec.kind != JobKind.SERVE_POLICY or not job.spec.run_dir:
+        raise ValueError("A policy server job with a session directory is required")
+
+    names = ("status.json", "session.json")
+
+    if job.spec.executor == Executor.SSH:
+        if remote is None or remote.label != job.spec.host:
+            raise RemoteError("GPU host configuration is missing or changed")
+
+        paths = [
+            posixpath.join(job.spec.run_dir, name)
+            for name in names
+        ]
+        files = remote.transport.read_texts(paths)
+        texts = [files.get(path) for path in paths]
+
+    else:
+        texts = []
+        for name in names:
+            path = Path(job.spec.run_dir) / name
+            text = (
+                path.read_text(encoding="utf-8")
+                if path.is_file()
+                else None
+            )
+            texts.append(text)
+
+    return {
+        name: json.loads(text) if text is not None else None
+        for name, text in zip(names, texts)
+    }
+
+
+def session_state(job: Job, status: dict | None) -> str:
+    recorded = status.get("status") if status else None
+
+    if job.is_active():
+        return recorded or "starting"
+
+    if job.status == JobStatus.STOPPED:
+        return "stopped"
+
+    if job.status == JobStatus.FAILED:
+        return "failed"
+
+    if recorded in ("stopped", "failed"):
+        return recorded
+
+    return "ended_unknown"
+
+def session_status(
+    job: Job,
+    jobs: list[Job],
+    remote: Remote | None,
+) -> dict:
+    status = None
+    session = None
+    unreachable = job.unreachable
+    read_error = None
+
+    try:
+        files = read_session_files(job, remote)
+        status = files["status.json"]
+        session = files["session.json"]
+    except RemoteError as exc:
+        unreachable = str(exc)
+    except (OSError, ValueError) as exc:
+        read_error = str(exc)
+
+    tunnel = next(
+        (
+            item
+            for item in jobs
+            if item.spec.kind == JobKind.POLICY_TUNNEL
+            and item.spec.metadata.get("server_job_id") == job.id
+        ),
+        None,
+    )
+
+    return {
+        "job": job.to_dict(),
+        "state": session_state(job, status),
+        "status": status,
+        "session": session,
+        "unreachable": unreachable,
+        "read_error": read_error,
+        "tunnel": tunnel.to_dict() if tunnel else None,
+    }
