@@ -20,6 +20,7 @@ class JobKind(str, Enum):
     TRAIN = "train"
     NORM_STATS = "norm_stats"
     SERVE_POLICY = "serve_policy"
+    POLICY_TUNNEL = "policy_tunnel"
     CONVERT = "convert"
     SYNC = "sync"
     MERGE = "merge"
@@ -57,6 +58,7 @@ class JobSpec:
     run_dir: str | None = None
     # Remote label (user@host) of an ssh job, for provenance.
     host: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -103,6 +105,7 @@ class Job:
             cwd=d["spec"].get("cwd"),
             run_dir=d["spec"].get("run_dir"),
             host=d["spec"].get("host"),
+            metadata=d["spec"].get("metadata", {}),
         )
 
         def _dt(v: str | None) -> datetime | None:

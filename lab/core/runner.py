@@ -27,13 +27,21 @@ class JobConflict(RuntimeError):
 # compete for the single GPU, so they exclude each other. One dataset sync at
 # a time keeps the GPU host's .incoming/ free of concurrent writers.
 _EXCLUSIVE: dict[JobKind, set[JobKind]] = {
-    JobKind.TRAIN: {JobKind.TRAIN, JobKind.NORM_STATS},
-    JobKind.NORM_STATS: {JobKind.TRAIN, JobKind.NORM_STATS},
-    JobKind.SERVE_POLICY: {JobKind.SERVE_POLICY},
+    JobKind.TRAIN: {
+        JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY,
+    },
+    JobKind.NORM_STATS: {
+        JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY,
+    },
+    JobKind.SERVE_POLICY: {
+        JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY,
+    },
+    JobKind.POLICY_TUNNEL: {JobKind.POLICY_TUNNEL},
     JobKind.SYNC: {JobKind.SYNC},
     JobKind.MERGE: {JobKind.MERGE, JobKind.EDIT},
     JobKind.EDIT: {JobKind.EDIT, JobKind.MERGE},
 }
+
 
 
 class Runner:
