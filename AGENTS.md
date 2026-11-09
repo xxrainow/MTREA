@@ -200,8 +200,10 @@ review; nobody pushes to main directly.
 - Policy serving core supports checkpoint selection, server job submission,
   SSH tunnel jobs and session status assembly. Server stop or confirmed exit
   cleans up associated tunnels. Remote connectivity errors are reported separately
-  from file read errors. API/web integration, dedicated serving tests and
-  end-to-end validation remain outstanding.
+  from file read errors. FastAPI endpoints expose server start, checkpoint/session listing and tunnel
+start. API registration and an empty session listing were verified manually.
+Web integration, dedicated serving tests and end-to-end validation remain
+outstanding.
 
 
 
