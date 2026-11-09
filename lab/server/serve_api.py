@@ -32,12 +32,17 @@ def start(body: ServeBody, request: Request) -> dict:
 
     try:
         with state.runner_lock:
-            if (
-                body.target == "ssh"
-                and remote is not None
-                and Executor.SSH not in state.runner.executors
-            ):
-                state.runner.executors[Executor.SSH] = SshExecutor(remote)
+            if body.target == "ssh" and remote is not None:
+                executor = state.runner.executors.get(Executor.SSH)
+
+                if executor is None:
+                    state.runner.executors[Executor.SSH] = SshExecutor(remote)
+
+                elif executor.remote.config != remote.config:
+                    raise ValueError(
+                        "GPU host configuration changed; "
+                        "restart the lab backend before starting a policy server"
+                    )
 
             job = serving.start(
                 **body.model_dump(),

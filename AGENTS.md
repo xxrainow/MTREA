@@ -202,7 +202,9 @@ review; nobody pushes to main directly.
   for future robot rollout logging. TypeScript and lint checks pass. Disabled
   tunnel controls for stopped sessions and requested checkpoint display were
   verified manually. Dedicated tests cover session state, error classification,
-  API refusals, GPU job exclusion and tunnel cleanup. Related serving, runner,
+  API refusals, GPU job exclusion and tunnel cleanup. Policy start refuses remote
+  configuration changes that differ from the existing SSH executor and asks for
+  a backend restart; equal reloaded configurations reuse the executor. Related serving, runner,
   boundary and existing API tests pass. A real start attempt was refused with
   GPU busy; successful model readiness and tunnel connectivity remain unverified.
 
