@@ -27,13 +27,21 @@ class JobConflict(RuntimeError):
 # compete for the single GPU, so they exclude each other. One dataset sync at
 # a time keeps the GPU host's .incoming/ free of concurrent writers.
 _EXCLUSIVE: dict[JobKind, set[JobKind]] = {
-    JobKind.TRAIN: {JobKind.TRAIN, JobKind.NORM_STATS},
-    JobKind.NORM_STATS: {JobKind.TRAIN, JobKind.NORM_STATS},
-    JobKind.SERVE_POLICY: {JobKind.SERVE_POLICY},
+    JobKind.TRAIN: {
+        JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY,
+    },
+    JobKind.NORM_STATS: {
+        JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY,
+    },
+    JobKind.SERVE_POLICY: {
+        JobKind.TRAIN, JobKind.NORM_STATS, JobKind.SERVE_POLICY,
+    },
+    JobKind.POLICY_TUNNEL: {JobKind.POLICY_TUNNEL},
     JobKind.SYNC: {JobKind.SYNC},
     JobKind.MERGE: {JobKind.MERGE, JobKind.EDIT},
     JobKind.EDIT: {JobKind.EDIT, JobKind.MERGE},
 }
+
 
 
 class Runner:
@@ -106,6 +114,25 @@ class Runner:
 
             job.finished_at = datetime.now()
             self.store.save(job)
+
+        by_id = {job.id: job for job in jobs}
+
+        for index, tunnel in enumerate(jobs):
+            if (
+                tunnel.spec.kind != JobKind.POLICY_TUNNEL
+                or not tunnel.is_active()
+            ):
+                continue
+
+            server_id = tunnel.spec.metadata.get("server_job_id")
+            server = by_id.get(server_id)
+
+            if (
+                server is not None
+                and not server.is_active()
+                and not server.unreachable
+            ):
+                jobs[index] = self.stop(tunnel.id)
         return jobs
 
     def active(self) -> list[Job]:
@@ -121,6 +148,14 @@ class Runner:
         job = self.store.get(job_id)
         if job is None:
             raise KeyError(job_id)
+        if job.spec.kind == JobKind.SERVE_POLICY:
+            for tunnel in self.store.list():
+                if (
+                    tunnel.spec.kind == JobKind.POLICY_TUNNEL
+                    and tunnel.is_active()
+                    and tunnel.spec.metadata.get("server_job_id") == job.id
+                ):
+                    self.stop(tunnel.id)      
         if job.status == JobStatus.RUNNING and job.pid is not None:
             self.executors[job.spec.executor].stop(job.pid, job_id=job.id) # stop process by executor
             job.status = JobStatus.STOPPED

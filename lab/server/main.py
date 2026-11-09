@@ -19,6 +19,7 @@ from lab.server import collection_api
 from lab.server import datasets_api
 from lab.server import remote_api
 from lab.server import train_api
+from lab.server import serve_api
 from lab.core.remote import RemoteError, RemoteNotConfigured, load_remote
 
 
@@ -100,6 +101,7 @@ def create_app(
     application.include_router(datasets_api.router)
     application.include_router(remote_api.router)
     application.include_router(train_api.router)
+    application.include_router(serve_api.router)
 
     return application
 
