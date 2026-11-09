@@ -194,6 +194,51 @@
   margin-top: 24px;
 }
 
+.run-sessions {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-session {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--lab-border);
+  border-radius: 6px;
+  background: var(--lab-background);
+  overflow-wrap: anywhere;
+}
+
+.run-session .run-description {
+  line-height: 1.6;
+}
+
+.run-session > [role="alert"],
+.run-session > [role="status"] {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.run-session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-session-log {
+  margin-top: 12px;
+}
+
+.run-session-log .run-log {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
 @media (max-width: 1100px) {
   .run-layout {
     grid-template-columns: 1fr;
