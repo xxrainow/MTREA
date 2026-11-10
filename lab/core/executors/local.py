@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 from lab.core.executors.base import BaseExecutor
-from lab.core.models import JobSpec
+from lab.core.models import JobKind, JobSpec
 
 
 class LocalExecutor(BaseExecutor):
@@ -31,9 +31,15 @@ class LocalExecutor(BaseExecutor):
             group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         else:
             group = {"start_new_session": True}  # own process group: our SIGINT doesn't reach it
+        # Rollout instructions are arbitrary text, including shell metacharacters.
+        argv = spec.metadata.get("argv") if spec.kind == JobKind.ROLLOUT else None
+        if argv is not None and (not isinstance(argv, list) or not argv
+                                 or not all(isinstance(arg, str) for arg in argv)):
+            log.close()
+            raise ValueError("Rollout argv must be a nonempty list of strings")
         proc = subprocess.Popen(
-            spec.cmd,
-            shell=True,
+            argv if argv is not None else spec.cmd,
+            shell=argv is None,
             cwd=cwd,
             stdout=log,
             stderr=subprocess.STDOUT,

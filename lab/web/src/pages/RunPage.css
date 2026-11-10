@@ -106,6 +106,7 @@
 }
 
 .run-field select,
+.run-field input,
 .run-field textarea {
   width: 100%;
   min-width: 0;
@@ -238,6 +239,11 @@
   max-height: 280px;
   overflow-y: auto;
 }
+
+.run-execution-form { margin-top: 20px; }
+.run-number-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.run-camera-image { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--lab-background); }
+.run-execution-log { max-height: 320px; overflow-y: auto; }
 
 @media (max-width: 1100px) {
   .run-layout {

@@ -17,6 +17,7 @@ from lab.core.executors.base import BaseExecutor, read_local_log
 from lab.core.models import Executor, Job, JobKind, JobSpec, JobStatus
 from lab.core.remote import RemoteError
 from lab.core.store import JobStore
+from robot.rollout_commands import submit_command
 
 
 class JobConflict(RuntimeError):
@@ -40,6 +41,7 @@ _EXCLUSIVE: dict[JobKind, set[JobKind]] = {
     JobKind.SYNC: {JobKind.SYNC},
     JobKind.MERGE: {JobKind.MERGE, JobKind.EDIT},
     JobKind.EDIT: {JobKind.EDIT, JobKind.MERGE},
+    JobKind.ROLLOUT: {JobKind.ROLLOUT},
 }
 
 
@@ -77,10 +79,12 @@ class Runner:
 
     # --- watch ---
 
-    def refresh(self) -> list[Job]:
+    def refresh(self, *, kind: JobKind | None = None) -> list[Job]:
         """Poll every active job; persist any state change. Returns all jobs."""
         jobs = self.store.list()
         for job in jobs:
+            if kind is not None and job.spec.kind != kind:
+                continue
             # Do not change the ledger if the termination result is unknown
             if job.status not in (JobStatus.RUNNING, JobStatus.UNKNOWN):
                 continue
@@ -118,6 +122,8 @@ class Runner:
         by_id = {job.id: job for job in jobs}
 
         for index, tunnel in enumerate(jobs):
+            if kind is not None and kind != JobKind.POLICY_TUNNEL:
+                continue
             if (
                 tunnel.spec.kind != JobKind.POLICY_TUNNEL
                 or not tunnel.is_active()
@@ -148,6 +154,15 @@ class Runner:
         job = self.store.get(job_id)
         if job is None:
             raise KeyError(job_id)
+        if (job.spec.kind == JobKind.ROLLOUT
+                and job.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.UNKNOWN}):
+            if not job.spec.run_dir:
+                raise JobConflict("Rollout Stop requires a trial command channel")
+            try:
+                submit_command(Path(job.spec.run_dir), "stop")
+            except (OSError, ValueError, RuntimeError, KeyError) as exc:
+                raise JobConflict(f"Rollout Stop is unavailable: {exc}") from exc
+            return job
         if job.spec.kind == JobKind.SERVE_POLICY:
             for tunnel in self.store.list():
                 if (

@@ -21,6 +21,7 @@ class JobKind(str, Enum):
     NORM_STATS = "norm_stats"
     SERVE_POLICY = "serve_policy"
     POLICY_TUNNEL = "policy_tunnel"
+    ROLLOUT = "rollout"
     CONVERT = "convert"
     SYNC = "sync"
     MERGE = "merge"
@@ -207,7 +208,31 @@ class RolloutRecord:
         d["started_at"] = self.started_at.isoformat()
         return d
 
+@dataclass(frozen=True)
+class RolloutConfig:
+    server_job_id: str
+    instruction: str
+    max_relative_target: float
+    time_limit_s: float
 
+class RolloutPhase(str, Enum):
+    IDLE = "idle"
+    CONNECTING = "connecting"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+    ABORTED = "aborted"
+    FAILED = "failed"
+    
+@dataclass(frozen=True)
+class RolloutStatus:
+    phase: RolloutPhase = RolloutPhase.IDLE
+    rollout_id: str | None = None
+    server_job_id: str | None = None
+    elapsed_s: float = 0.0
+    stop_requested: bool = False
+    end_reason: str | None = None
+    error: str | None = None
 
 # --- Data Collect Feature ---
 class CollectionPhase(str, Enum):

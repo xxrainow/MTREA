@@ -207,8 +207,8 @@ review; nobody pushes to main directly.
   LeRobot 0.6.1: one 589-frame recorded episode sent 78 observations and received
   27 action chunks with no queue stalls. This verifies local hold communication,
   not GPU inference, SSH connectivity or physical robot execution.
-  Server logs expand under the selected session; Execution logs remains reserved
-  for future robot rollout logging. TypeScript and lint checks pass. Disabled
+  Server logs expand under the selected session; Execution logs shows the selected
+  robot rollout's job output through the monitor below. TypeScript and lint checks pass. Disabled
   tunnel controls for stopped sessions and requested checkpoint display were
   verified manually. Dedicated tests cover session state, error classification,
   API refusals, GPU job exclusion and tunnel cleanup. Policy start refuses remote
@@ -216,6 +216,112 @@ review; nobody pushes to main directly.
   a backend restart; equal reloaded configurations reuse the executor. Related serving, runner,
   boundary and existing API tests pass. A real start attempt was refused with
   GPU busy; successful model readiness and tunnel connectivity remain unverified.
+
+- Robot-side rollout is under development in `robot/rollout_client.py` and
+  `robot/rollout_records.py`; rollout API/UI wiring is still pending.
+  Client creation takes the existing hardware lock first. Stop blocks
+  new actions, closes inference communication and sends measured positions as hold
+  targets while retaining torque, device connections and the lock. Only explicit
+  Release arm disables torque and returns the lock after workers and devices are
+  stopped; cleanup failures retain the lock for retry. `hold_command_sent` records
+  command transmission, not verified physical holding. Trial events are append-only
+  and status snapshots use the existing atomic writer; existing trial files are
+  refused. Chunk/action counts, queue size and last/max observation-to-chunk latency
+  are collected in memory and status is refreshed at most 5 Hz by the monitoring
+  thread, outside control and receive threads. Latency stays null before a valid
+  sample. `robot/rollout_stalls.py` tracks action gaps from acceptance or the last
+  successful policy action using a monotonic clock. The 500 ms threshold logs one
+  stall per gap, retaining the last target and torque without issuing extra
+  targets. Resumption continues the trial; a gap still open at stop is recorded as
+  ended. Stall events are drained by the monitor and terminal recorder, not written
+  by the control thread. Connection failures still abort, and time limits still
+  stop trials. Fake-client tests cover lifecycle, recording, metrics and stalls;
+  actual LeRobot transport integration is also covered below. Emergency-stop
+  timing and physical execution remain unverified or unimplemented.
+
+- Rollout preview now uses `robot/rollout_preview.py` and the shared
+  `FramePublisher` from recording telemetry. It submits already acquired RGB
+  observations immediately before transport, never opens cameras, and performs
+  JPEG encoding/writes on a separate worker at most 5 Hz with one pending frame
+  set. `frames/frames.json` retains observation timestamps; frames older than 2 s
+  are rejected before/after encoding and when read, regardless of JPEG mtime.
+  Preview errors are exposed separately and do not abort policy control. The
+  preview worker closes after policy workers stop; stopped previews are not live.
+  Trial `session.json` is immutable and records full resolved client configuration,
+  effective instruction, time limit, robot id, LeRobot version and Git commit/dirty
+  state (null if unavailable). Metadata and previews are connected to
+  `run_recorded_policy`, with synthetic-image and fake-client tests plus the
+  actual hold transport tests below. Rollout API/UI and hardware validation remain pending.
+
+- `python -m robot.rollout_worker` now owns one rollout in a dedicated process;
+  `python -m robot.rollout_commands stop|release --trial-dir=...` submits per-id
+  command files. Results distinguish accepted from completed; trial tokens reject
+  stale commands and PID/start-time checks reject dead or reused owners. Stop,
+  time limits, errors and SIGINT/SIGTERM retain connections/torque/lock until
+  explicit Release. Release before worker cleanup is rejected; release failure
+  retains ownership for retry. Successful Release records release and exits
+  (1 after policy failure, otherwise 0). Initialization failure exits 1. Never
+  route ordinary Stop through Runner's terminate/kill escalation. Session metadata
+  is persisted before device construction. The real factory imports RobotClient
+  under the trial directory for logs and refuses absent/mismatched calibration
+  without prompting. Fake-client and subprocess signal tests cover process
+  ownership; actual hold transport is covered below. No real hardware has been opened.
+
+- `tests/test_rollout_hold_integration.py` launches the existing
+  `research.serve_policy --fake=hold` and installed LeRobot 0.6.1 RobotClient
+  in separate processes, using `tests/rollout_fake_worker.py` to replace only
+  hardware construction. Synthetic images use camera dimensions from
+  `robot/config.py`; a temporary checkpoint config fixes protocol features, with
+  no weights, dataset, GPU or SSH. Serial/VideoCapture opens are forbidden and
+  the test takes an isolated hardware lock. Five passing scenarios cover actual
+  observation/action transport and hold targets, Stop/Release, time limit,
+  checkpoint/shape refusal and server disconnect. Terminal states retain the
+  owner/lock until Release; failed trials exit 1 after successful Release.
+  These are communication/ownership checks, not physical holding or timing
+  validation. The additional API/restart integration below also passes.
+
+- Lab rollout API now exposes check/start, list/detail, Stop/Release, per-command
+  acknowledgements and job logs under `/api/rollouts`. `lab/core/rollout.py`
+  reuses serving's session/tunnel checks and Runner; checkpoints/addresses come
+  from selected server jobs, never request-supplied strings. Trials live under
+  `<data_dir>/rollouts/robot/<unique_id>`. The local owner receives `--data-dir`
+  so its hardware lock matches the backend's shared lock. Rollout LocalExecutor
+  starts stored argv without a shell. Jobs Stop routes rollout jobs to command
+  IPC and never terminate/kill; a missing/unready channel is 409. Start stops
+  standalone camera preview only after preflight, refuses fake hardware mode,
+  and serialized starts cannot overlap. Pending/running/stopped-but-owned rollout
+  jobs block new rollout, collection and standalone camera preview. PID/start-time
+  and file-backed status recover ownership after backend restart; dead owners with
+  stale active files are `ended_unknown`. Backend shutdown leaves owners alive
+  until explicit Release. Release requires terminal policy state; the worker
+  verifies actual thread cleanup and permits retries. API and actual hold + fake
+  hardware process tests cover start, Stop, backend restart, Jobs Stop and Release
+  using the Lab data-root lock. No physical hardware has been opened. Web controls
+  and preview HTTP access are connected below; GPU/SSH and actual arm + local hold
+  validation remain pending.
+
+- Run & Evaluate now mounts `RolloutPanel` with ready server selection, instruction,
+  explicit positive relative-target/time limits, read-only preflight and Start.
+  Changed inputs invalidate Start until checked again; the backend still rechecks.
+  `useRollouts` polls file-backed status and prioritizes the owner, restoring the
+  selected job and pending command ids across navigation/reload. Stop/Release wait
+  for execution acknowledgements, not only HTTP acceptance; failed Release permits
+  retry and a dead owner with no acknowledgement is shown as unconfirmed. Stopped
+  owners keep settings/history locked until Release. The monitor shows metrics,
+  errors, selected policy/instruction, ownership, and independently polled execution
+  logs. Camera names come from worker status. `/api/rollouts/<job>/frames/<name>`
+  reuses the preview freshness check, serves only running/live owners and JPEGs
+  within the trial directory, with no-store; stale/inactive/unknown/symlink-escaping
+  frames are refused. The UI hides failed/stopped previews and never starts camera
+  capture. Rollout monitor/frame/log/command reads do not probe SSH; Runner supports
+  kind-filtered local refresh, while Start/check retains server/tunnel preflight.
+  The page disables stopping a policy server used by the owner. Hardcoded task-role
+  placeholder choices were removed; this UI does not assign research roles. Success/
+  failure annotation and aggregate evaluation remain pending. TypeScript/lint,
+  actual hold + fake-hardware preview/API integration and API/runner regressions
+  pass. Isolated mock-API browser checks cover settings invalidation, live preview/
+  logs, navigation/reload, command waiting and failed Release retry. These checks
+  do not establish real hardware holding, GPU inference or SSH timing.
 
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.
