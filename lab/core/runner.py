@@ -79,10 +79,12 @@ class Runner:
 
     # --- watch ---
 
-    def refresh(self) -> list[Job]:
+    def refresh(self, *, kind: JobKind | None = None) -> list[Job]:
         """Poll every active job; persist any state change. Returns all jobs."""
         jobs = self.store.list()
         for job in jobs:
+            if kind is not None and job.spec.kind != kind:
+                continue
             # Do not change the ledger if the termination result is unknown
             if job.status not in (JobStatus.RUNNING, JobStatus.UNKNOWN):
                 continue
@@ -120,6 +122,8 @@ class Runner:
         by_id = {job.id: job for job in jobs}
 
         for index, tunnel in enumerate(jobs):
+            if kind is not None and kind != JobKind.POLICY_TUNNEL:
+                continue
             if (
                 tunnel.spec.kind != JobKind.POLICY_TUNNEL
                 or not tunnel.is_active()

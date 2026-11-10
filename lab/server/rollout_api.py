@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from lab.core.hardware import HardwareBusy
@@ -106,3 +107,14 @@ def logs(job_id: str, request: Request,
         state.rollout.get_job(job_id, state.runner)
         return {"job_id": job_id,
                 "content": state.runner.read_log(job_id, tail_lines=tail_lines)}
+
+
+@router.get("/{job_id}/frames/{name}")
+def frame(job_id: str, name: str, request: Request):
+    state = request.app.state
+    with errors(), state.runner_lock:
+        try:
+            content = state.rollout.frame(job_id, name, state.runner)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from None
+        return Response(content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})

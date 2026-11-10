@@ -207,8 +207,8 @@ review; nobody pushes to main directly.
   LeRobot 0.6.1: one 589-frame recorded episode sent 78 observations and received
   27 action chunks with no queue stalls. This verifies local hold communication,
   not GPU inference, SSH connectivity or physical robot execution.
-  Server logs expand under the selected session; Execution logs remains reserved
-  for future robot rollout logging. TypeScript and lint checks pass. Disabled
+  Server logs expand under the selected session; Execution logs shows the selected
+  robot rollout's job output through the monitor below. TypeScript and lint checks pass. Disabled
   tunnel controls for stopped sessions and requested checkpoint display were
   verified manually. Dedicated tests cover session state, error classification,
   API refusals, GPU job exclusion and tunnel cleanup. Policy start refuses remote
@@ -296,8 +296,32 @@ review; nobody pushes to main directly.
   until explicit Release. Release requires terminal policy state; the worker
   verifies actual thread cleanup and permits retries. API and actual hold + fake
   hardware process tests cover start, Stop, backend restart, Jobs Stop and Release
-  using the Lab data-root lock. No physical hardware has been opened. Web controls,
-  preview HTTP access, GPU/SSH validation and actual arm + local hold remain pending.
+  using the Lab data-root lock. No physical hardware has been opened. Web controls
+  and preview HTTP access are connected below; GPU/SSH and actual arm + local hold
+  validation remain pending.
+
+- Run & Evaluate now mounts `RolloutPanel` with ready server selection, instruction,
+  explicit positive relative-target/time limits, read-only preflight and Start.
+  Changed inputs invalidate Start until checked again; the backend still rechecks.
+  `useRollouts` polls file-backed status and prioritizes the owner, restoring the
+  selected job and pending command ids across navigation/reload. Stop/Release wait
+  for execution acknowledgements, not only HTTP acceptance; failed Release permits
+  retry and a dead owner with no acknowledgement is shown as unconfirmed. Stopped
+  owners keep settings/history locked until Release. The monitor shows metrics,
+  errors, selected policy/instruction, ownership, and independently polled execution
+  logs. Camera names come from worker status. `/api/rollouts/<job>/frames/<name>`
+  reuses the preview freshness check, serves only running/live owners and JPEGs
+  within the trial directory, with no-store; stale/inactive/unknown/symlink-escaping
+  frames are refused. The UI hides failed/stopped previews and never starts camera
+  capture. Rollout monitor/frame/log/command reads do not probe SSH; Runner supports
+  kind-filtered local refresh, while Start/check retains server/tunnel preflight.
+  The page disables stopping a policy server used by the owner. Hardcoded task-role
+  placeholder choices were removed; this UI does not assign research roles. Success/
+  failure annotation and aggregate evaluation remain pending. TypeScript/lint,
+  actual hold + fake-hardware preview/API integration and API/runner regressions
+  pass. Isolated mock-API browser checks cover settings invalidation, live preview/
+  logs, navigation/reload, command waiting and failed Release retry. These checks
+  do not establish real hardware holding, GPU inference or SSH timing.
 
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.

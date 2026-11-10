@@ -15,6 +15,7 @@ from lab.core.remote import Remote
 from lab.core.runner import JobConflict, Runner
 from robot.config import POLICY_SERVER_HOST, POLICY_SERVER_PORT
 from robot.rollout_commands import owner_alive, submit_command
+from robot.rollout_preview import read_trial_frame
 
 
 def validate_rollout_config(config: RolloutConfig) -> None:
@@ -53,7 +54,7 @@ class RolloutService:
         return trial
 
     def get_job(self, job_id: str, runner: Runner) -> Job:
-        job = runner.get(job_id)
+        job = runner.store.get(job_id)
         if job is None or job.spec.kind != JobKind.ROLLOUT:
             raise KeyError(job_id)
         self._root(job)
@@ -78,11 +79,11 @@ class RolloutService:
                 "session": session, "owner_alive": alive, "read_error": error}
 
     def sessions(self, runner: Runner) -> list[dict]:
-        return [self.snapshot(job) for job in runner.refresh()
+        return [self.snapshot(job) for job in runner.refresh(kind=JobKind.ROLLOUT)
                 if job.spec.kind == JobKind.ROLLOUT]
 
     def is_active(self, runner: Runner) -> bool:
-        for job in runner.refresh():
+        for job in runner.refresh(kind=JobKind.ROLLOUT):
             if job.spec.kind == JobKind.ROLLOUT:
                 if job.is_active() or self.snapshot(job)["owner_alive"]:
                     return True
@@ -165,3 +166,14 @@ class RolloutService:
             raise KeyError(command_id)
         return (_read(root / "command_results" / f"{command_id}.json")
                 or {"id": command_id, "state": "queued", "error": None})
+
+    def frame(self, job_id: str, name: str, runner: Runner) -> bytes:
+        job = self.get_job(job_id, runner)
+        snapshot = self.snapshot(job)
+        status = snapshot["status"] or {}
+        return read_trial_frame(
+            self._root(job), name,
+            active=bool(snapshot["owner_alive"] and snapshot["state"] == "running"
+                        and status.get("preview_active") and not snapshot["read_error"]),
+            error=status.get("preview_error"),
+        )

@@ -213,6 +213,11 @@ def test_lab_api_drives_hold_owner_across_backend_restart(hold_system):
             wait_for(lambda: (state(client, job_id).get("status") or {}).get("actions_executed", 0) >= 3,
                      processes=[server, children[0]])
             assert paths.hardware_lock(data).exists()
+            from robot.config import CAMERAS
+            camera_name = CAMERAS[0].name
+            def live_frame():
+                return client.get(f"/api/rollouts/{job_id}/frames/{camera_name}").status_code == 200
+            wait_for(live_frame, processes=[server, children[0]])
             assert client.post("/api/rollouts/start", json=body).status_code == 409
             response = client.post(f"/api/rollouts/{job_id}/stop")
             assert response.status_code == 202
@@ -220,6 +225,7 @@ def test_lab_api_drives_hold_owner_across_backend_restart(hold_system):
                      processes=[server, children[0]])
             assert state(client, job_id)["state"] == "stopped"
             assert state(client, job_id)["owner_alive"]
+            assert client.get(f"/api/rollouts/{job_id}/frames/{camera_name}").status_code == 404
 
         # Restart drops executor Popen handles; ledger + PID/start-time still recover ownership.
         with TestClient(app()) as restarted:

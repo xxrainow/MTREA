@@ -11,6 +11,8 @@ import {
 import type { PolicyCheckpoint, PolicySession } from '../api/serving';
 import { loadJobLog, stopJob } from '../api/training';
 
+import RolloutPanel from '../components/RolloutPanel';
+
 import './RunPage.css';
 
 function RunPage() {
@@ -20,8 +22,7 @@ function RunPage() {
   const [datasetName, setDatasetName] = useState('');
   const [datasetError, setDatasetError] = useState('');
   const [checkpoint, setCheckpoint] = useState('');
-  const [task, setTask] = useState('pick_place');
-  const [instruction, setInstruction] = useState('');
+  const [rolloutServerId, setRolloutServerId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<PolicySession[] | null>(null);
   const [sessionError, setSessionError] = useState('');
 
@@ -147,7 +148,7 @@ function RunPage() {
   }
 
   async function handleStopPolicy(jobId: string) {
-    if (stoppingPolicyId !== null) return;
+    if (stoppingPolicyId !== null || rolloutServerId === jobId) return;
 
     setStoppingPolicyId(jobId);
     setPolicyError('');
@@ -305,6 +306,7 @@ function RunPage() {
                         type="button"
                         className="run-button"
                         disabled={
+                          rolloutServerId === session.job.id ||
                           stoppingPolicyId !== null ||
                           !['running', 'queued'].includes(session.job.status)
                         }
@@ -340,63 +342,7 @@ function RunPage() {
               </ul>
             )}
           </section>
-          <section className="run-panel">
-            <div className="run-panel-header">
-              <h2>Camera preview</h2>
-              <span className="run-status">Integration pending</span>
-            </div>
-
-            <div className="run-cameras">
-              {['wrist', 'scene'].map((camera) => (
-                <figure className="run-camera" key={camera}>
-                  <figcaption>{camera}</figcaption>
-                  <div className="run-camera-placeholder">
-                    Live video integration pending
-                  </div>
-                </figure>
-              ))}
-            </div>
-          </section>
-
-          <section className="run-panel">
-            <h2>Run status</h2>
-
-            <dl className="run-details">
-              <div>
-                <dt>Rollout ID</dt>
-                <dd>—</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd>Not started</dd>
-              </div>
-              <div>
-                <dt>Elapsed time</dt>
-                <dd>—</dd>
-              </div>
-            </dl>
-
-            <div className="run-actions">
-              <button
-                type="button"
-                className="run-button run-button-primary"
-                disabled
-              >
-                Start rollout
-              </button>
-              <button type="button" className="run-button" disabled>
-                Stop execution
-              </button>
-            </div>
-          </section>
-
-          <section className="run-panel">
-            <h2>Execution logs</h2>
-            <p className="run-description">
-              Robot execution logs will appear here once rollout logging is
-              connected.
-            </p>
-          </section>
+          <RolloutPanel sessions={sessions} sessionError={sessionError} onServerInUse={setRolloutServerId} />
         </div>
 
         <div className="run-controls">
@@ -493,52 +439,9 @@ function RunPage() {
               </>
             )}
             <p className="run-description">
-              Starting the server does not send test observations. Run the dataset
+              Start robot execution to send live observations, or run the dataset
               client check separately from the command line.
             </p>
-
-            <label className="run-field">
-              Evaluation task
-              <select
-                value={task}
-                onChange={(event) => setTask(event.target.value)}
-              >
-                <option value="pick_place">pick_place · T_sub</option>
-                <option value="stack">stack · held-out</option>
-                <option value="push">push · held-out</option>
-                <option value="open_drawer">open_drawer · held-out</option>
-                <option value="pour">pour · held-out</option>
-              </select>
-            </label>
-
-            <label className="run-field">
-              Task instruction
-              <textarea
-                rows={4}
-                value={instruction}
-                onChange={(event) => setInstruction(event.target.value)}
-                placeholder="Task instruction to send to the policy"
-              />
-            </label>
-
-            <dl className="run-details">
-              <div>
-                <dt>GPU server connection</dt>
-                <dd>{target === 'local' ? 'Not required' : 'Not checked'}</dd>
-              </div>
-              <div>
-                <dt>SSH tunnel</dt>
-                <dd>{target === 'local' ? 'Not required' : 'Not checked'}</dd>
-              </div>
-              <div>
-                <dt>Policy readiness</dt>
-                <dd>Not checked</dd>
-              </div>
-              <div>
-                <dt>Robot connection</dt>
-                <dd>Not checked</dd>
-              </div>
-            </dl>
 
             <button
               type="button"

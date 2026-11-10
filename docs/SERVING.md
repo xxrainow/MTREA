@@ -374,7 +374,7 @@ fake-hardware client through the job executor, requests Stop, restarts the backe
 recovers the owner from disk, and requests Release. It also checks that Jobs Stop
 does not terminate the owner and that the worker uses the Lab's shared hardware
 lock path. The test substitutes only the worker's hardware factory/launch command.
-Web wiring and actual arm + local hold validation are still pending.
+Web wiring is described below; actual arm + local hold validation is still pending.
 
 ### Lab rollout API
 
@@ -391,6 +391,7 @@ recover the selected job after a backend restart:
 | `POST /api/rollouts/<job_id>/release` | submit Release after a terminal policy state; returns 202 and command id |
 | `GET /api/rollouts/<job_id>/commands/<command_id>` | queued, accepted, completed, rejected or failed acknowledgement |
 | `GET /api/rollouts/<job_id>/logs?tail_lines=100` | existing job stdout/stderr log, bounded to 1–1000 lines |
+| `GET /api/rollouts/<job_id>/frames/<camera>` | latest fresh observation JPEG from a live running owner, with `Cache-Control: no-store` |
 
 Check/Start accept exactly `server_job_id`, nonblank `instruction`, positive finite
 `max_relative_target` and `time_limit_s`. They do not accept arbitrary commands,
@@ -427,5 +428,43 @@ Backend shutdown does not automatically release a surviving owner. Job exit stat
 may be unknown after restart because LocalExecutor loses Popen handles; the trial
 files still retain the stopped/failed state and Release result.
 
-Web Start/Stop/Release, rollout preview HTTP access and physical validation remain
-separate next steps.
+Monitor/list refresh polls only local rollout jobs; detail, command, logs and frame
+lookups read the local ledger/files rather than probing SSH jobs. Preflight/Start
+still refresh the selected policy server and validate the existing tunnel.
+
+### Run page
+
+Run & Evaluate keeps policy-server preparation separate from robot execution.
+`RolloutPanel` selects an existing ready server (and running tunnel for SSH), takes
+the instruction and explicit positive relative-target/time limits, and enables
+Start only after Check rollout settings succeeds for unchanged inputs. Start still
+rechecks on the backend. This starts the real follower/cameras even in hold mode;
+hold changes the policy response, not the hardware backend.
+
+The monitor reads snapshots every 500 ms and restores the owner first after
+navigation/reload. It shows elapsed time, chunks/actions, queue size, latency,
+stalls, policy identifier, instruction, end reason, errors and device ownership.
+Stop and Release are separate controls. Command ids are retained in sessionStorage
+and polled until completed/rejected/failed; an HTTP 202 or accepted result keeps
+buttons locked. If the owner ends without an acknowledgement, the command is
+reported as unconfirmed rather than leaving the browser permanently locked or
+claiming physical Stop/Release. Failed Release permits retry. Settings/history
+stay locked while the owner/job is active; page navigation leaves it running.
+The policy-session Stop button is disabled for the owner's server.
+
+Execution logs poll the selected rollout's existing job log independently of
+policy-server logs. Camera names come from worker status, not web constants.
+The browser requests existing observation JPEGs, never standalone preview. Frame
+HTTP access reuses the robot preview's timestamp freshness rule, rejects inactive/
+dead owners and paths outside the trial's frame directory, and disables caching.
+Preview errors do not disable Stop/Release. Stopped previews are replaced with an
+inactive placeholder; unavailable requests hide old images and retry.
+
+The old illustrative task-role selector was removed: execution accepts an
+instruction and does not assign T_sub/held-out roles. Success/failure annotation
+and aggregate evaluation results remain unconnected. Browser checks with an
+isolated mock API exercised settings-change invalidation, live frame/log rendering,
+navigation/reload recovery, acknowledgement waiting and failed Release retry.
+Backend tests also exercise actual hold transport and fake hardware through frame
+HTTP access before Stop and refusal after Stop. None of these opened physical
+hardware. Actual arm + local hold and GPU/SSH validation remain separate next steps.

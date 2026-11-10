@@ -1,6 +1,7 @@
 import json
 import os
 import shlex
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock
@@ -14,6 +15,7 @@ from lab.core.hardware.lock import HardwareLock
 from lab.core.models import Executor, Job, JobKind, JobSpec, JobStatus
 from lab.server.main import create_app
 from robot.config import POLICY_SERVER_PORT
+from robot.config import CAMERAS
 
 
 def write(path, value):
@@ -232,3 +234,59 @@ def test_missing_wrong_kind_corrupt_status_and_outside_storage(client, tmp_path)
     job.spec = replace(job.spec, run_dir=str(tmp_path / "outside"))
     client.app.state.runner.store.save(job)
     assert client.get(f"/api/rollouts/{job.id}").status_code == 400
+
+
+def test_preview_serves_only_fresh_running_observations(client, tmp_path):
+    job, root = start(client)
+    name = CAMERAS[0].name
+    route = f"/api/rollouts/{job.id}/frames/{name}"
+    owner(root, preview_active=True)
+    frames = root / "frames"
+    write(frames / "frames.json", {name: {"captured_at": time.time()}})
+    (frames / f"{name}.jpg").write_bytes(b"synthetic-jpeg")
+    response = client.get(route)
+    assert response.status_code == 200 and response.content == b"synthetic-jpeg"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get(f"/api/rollouts/{job.id}/frames/unknown").status_code == 404
+    write(frames / "frames.json", {name: {"captured_at": time.time() - 3}})
+    assert client.get(route).status_code == 404
+    write(frames / "frames.json", {name: {"captured_at": time.time()}})
+    owner(root, preview_active=True, state="stopped")
+    assert client.get(route).status_code == 404
+    owner(root, preview_active=True, preview_error="encoder failed")
+    assert client.get(route).status_code == 404
+    owner(root, preview_active=True, process_started=0)
+    assert client.get(route).status_code == 404
+    owner(root, preview_active=True)
+    (frames / f"{name}.jpg").unlink()
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"private")
+    (frames / f"{name}.jpg").symlink_to(outside)
+    assert client.get(route).status_code == 404
+    (frames / f"{name}.jpg").unlink()
+    (frames / "frames.json").unlink()
+    frames.rmdir()
+    outside_frames = tmp_path / "outside-frames"
+    write(outside_frames / "frames.json", {name: {"captured_at": time.time()}})
+    (outside_frames / f"{name}.jpg").write_bytes(b"private")
+    frames.symlink_to(outside_frames, target_is_directory=True)
+    assert client.get(route).status_code == 404
+
+
+def test_local_monitor_and_stop_do_not_probe_gpu_host(client):
+    job, root = start(client)
+    owner(root)
+    runner = client.app.state.runner
+    from dataclasses import replace
+    server = runner.store.get("server")
+    server.spec = replace(server.spec, executor=Executor.SSH)
+    runner.store.save(server)
+    remote = Mock()
+    remote.is_running.side_effect = AssertionError("Local rollout monitoring must not probe SSH")
+    runner.executors[Executor.SSH] = remote
+    assert client.get("/api/rollouts").status_code == 200
+    assert client.get(f"/api/rollouts/{job.id}").status_code == 200
+    assert client.get(f"/api/rollouts/{job.id}/logs").status_code == 200
+    assert client.post(f"/api/rollouts/{job.id}/stop").status_code == 202
+    remote.is_running.assert_not_called()
