@@ -63,8 +63,8 @@ def data_root() -> Path:
 
 @dataclass(frozen=True)
 class RolloutGuardrails:
-    # If the action queue is starved this long, abort the rollout: a stalled
-    # policy server must stop the arm, not let it coast on a stale command.
+    # Log action gaps at this threshold; retain the last target and resume
+    # when actions return. Connection failures abort the rollout separately.
     queue_starved_ms: int = 500
     # Hard ceiling on one rollout so a policy that never terminates can't run
     # the arm indefinitely.

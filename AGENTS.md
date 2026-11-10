@@ -217,5 +217,27 @@ review; nobody pushes to main directly.
   boundary and existing API tests pass. A real start attempt was refused with
   GPU busy; successful model readiness and tunnel connectivity remain unverified.
 
+- Robot-side rollout is under development in `robot/rollout_client.py` and
+  `robot/rollout_records.py`; there is no executable entry point or rollout API/UI
+  wiring yet. Client creation takes the existing hardware lock first. Stop blocks
+  new actions, closes inference communication and sends measured positions as hold
+  targets while retaining torque, device connections and the lock. Only explicit
+  Release arm disables torque and returns the lock after workers and devices are
+  stopped; cleanup failures retain the lock for retry. `hold_command_sent` records
+  command transmission, not verified physical holding. Trial events are append-only
+  and status snapshots use the existing atomic writer; existing trial files are
+  refused. Chunk/action counts, queue size and last/max observation-to-chunk latency
+  are collected in memory and status is refreshed at most 5 Hz by the monitoring
+  thread, outside control and receive threads. Latency stays null before a valid
+  sample. `robot/rollout_stalls.py` tracks action gaps from acceptance or the last
+  successful policy action using a monotonic clock. The 500 ms threshold logs one
+  stall per gap, retaining the last target and torque without issuing extra
+  targets. Resumption continues the trial; a gap still open at stop is recorded as
+  ended. Stall events are drained by the monitor and terminal recorder, not written
+  by the control thread. Connection failures still abort, and time limits still
+  stop trials. Fake-client tests cover lifecycle, recording, metrics and stalls;
+  actual LeRobot transport integration, preview frames, emergency-stop timing
+  and physical execution remain unverified or unimplemented.
+
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.

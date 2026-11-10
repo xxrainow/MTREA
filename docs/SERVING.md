@@ -252,7 +252,14 @@ timing a real one will. Replay's chunks matched the dataset exactly (mean MAE 0.
   an arm at rest runs its queue dry before the next chunk is computed. On loopback
   that stall is about 370 ms, once it reached 628 ms, and the 500 ms guardrail in
   `robot/config.py` has to absorb it plus the time to send 1.84 MB through the
-  tunnel. Decide what the guardrail should do here after measuring the real link.
+  tunnel. The robot-side rollout client records gaps from the last executed action
+  (or connection acceptance before the first action). At 500 ms it records a stall
+  while leaving the last commanded target and torque unchanged; it resumes when
+  actions return. This threshold does not itself abort the trial. Connection errors
+  still abort it, and the trial time limit remains in force. Stall start, recovery
+  and an unresolved stall at stop are recorded in the trial events. These paths
+  have fake-client coverage only; physical holding and real-link timing still need
+  validation.
   Lowering the camera resolution is not an option, since it would not match the
   checkpoint.
 - **Aggregation is LeRobot's.** Chunks overlap by half at threshold 0.5 and the client

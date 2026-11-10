@@ -1,23 +1,29 @@
-import argparse
-from pathlib import Path
+"""Rollout helpers that retain torque and device ownership after Stop.
 
+Release arm is explicit so stopping a trial does not drop an unsupported arm.
+"""
+
+import argparse
+import logging
+import math
+import time
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
+from queue import Empty, Queue
+from threading import Event, Lock, Thread
+
+from lab.core.hardware.cameras import load_camera_configs
+from lab.core.hardware.devices import load_arm_config, safe_disconnect
+from lab.core.hardware.lock import HardwareLock
 from robot.config import (
     FPS,
     POLICY_SERVER_HOST,
     POLICY_SERVER_PORT,
     RolloutGuardrails,
 )
-
-import math
-
-from lab.core.hardware.cameras import load_camera_configs
-from lab.core.hardware.devices import load_arm_config
-
-from contextlib import suppress
-
-from lab.core.hardware.devices import safe_disconnect
-from lab.core.hardware.lock import HardwareLock
-import logging
+from robot.rollout_records import TrialRecorder
+from robot.rollout_stalls import QueueStallTracker
 
 
 def positive_float(value: str) -> float:
@@ -34,6 +40,7 @@ def positive_float(value: str) -> float:
         )
 
     return number
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -60,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--actions-per-chunk", type=int, default=50)
     parser.add_argument("--threshold", type=float, default=0.5)
     return parser
+
 
 def build_client_config(args: argparse.Namespace):
     if not args.checkpoint.strip():
@@ -108,6 +116,7 @@ def build_client_config(args: argparse.Namespace):
         client_device="cpu",
     )
 
+
 def create_locked_client(
     config,
     *,
@@ -116,6 +125,18 @@ def create_locked_client(
 ):
     class ManagedClient(client_type):
         def __init__(self, config):
+            self._io_lock = Lock()
+            self._stop_requested = Event()
+            self._stop_finished = Event()
+            self._holding = False
+            self._released = False
+            self._stats_lock = Lock()
+            self._chunks_received = 0
+            self._actions_executed = 0
+            self._last_latency_ms = None
+            self._max_latency_ms = None
+            self._stalls = QueueStallTracker(RolloutGuardrails().queue_starved_ms)
+
             try:
                 super().__init__(config)
             except BaseException:
@@ -129,6 +150,142 @@ def create_locked_client(
                     "rollout client initialization",
                 )
                 raise
+
+        @property
+        def running(self):
+            return (
+                not self._stop_requested.is_set()
+                and super().running
+            )
+
+        def start(self):
+            if self._stop_requested.is_set():
+                raise RuntimeError("Stopped clients cannot be restarted")
+            accepted = super().start()
+            if accepted and not self._stop_requested.is_set():
+                self._stalls.start()
+            return accepted
+
+        def control_loop_action(self, verbose=False):
+            with self._io_lock:
+                if self._stop_requested.is_set():
+                    return {}
+
+                result = super().control_loop_action(verbose)
+
+                with self._stats_lock:
+                    self._actions_executed += 1
+
+                self._stalls.action_executed()
+                return result
+
+        def _aggregate_action_queues(
+            self, incoming_actions, aggregate_fn=None
+        ):
+            latency_ms = None
+            if incoming_actions:
+                latency_ms = (
+                    time.time() - incoming_actions[0].get_timestamp()
+                ) * 1000
+
+            result = super()._aggregate_action_queues(
+                incoming_actions, aggregate_fn
+            )
+
+            if incoming_actions:
+                with self._stats_lock:
+                    self._chunks_received += 1
+
+                    if (
+                        latency_ms is not None
+                        and math.isfinite(latency_ms)
+                        and latency_ms >= 0
+                    ):
+                        self._last_latency_ms = latency_ms
+                        self._max_latency_ms = (
+                            latency_ms
+                            if self._max_latency_ms is None
+                            else max(self._max_latency_ms, latency_ms)
+                        )
+
+            return result
+
+        def metrics_snapshot(self) -> dict:
+            with self.action_queue_lock:
+                queue_size = self.action_queue.qsize()
+
+            with self._stats_lock:
+                snapshot = {
+                    "chunks_received": self._chunks_received,
+                    "actions_executed": self._actions_executed,
+                    "queue_size": queue_size,
+                    "last_latency_ms": self._last_latency_ms,
+                    "max_latency_ms": self._max_latency_ms,
+                }
+            snapshot.update(self._stalls.snapshot())
+            return snapshot
+
+        def stall_events(self) -> list[dict]:
+            return self._stalls.poll()
+
+        def control_loop_observation(self, task, verbose=False):
+            with self._io_lock:
+                if self._stop_requested.is_set():
+                    return None
+                return super().control_loop_observation(task, verbose)
+
+        def stop(self):
+            self._stop_requested.set()
+            self.shutdown_event.set()
+            self._stalls.finish()
+
+            try:
+                try:
+                    self.channel.close()
+                finally:
+                    with self._io_lock:
+                        if not self._holding and not self._released:
+                            positions = self.robot.bus.sync_read(
+                                "Present_Position",
+                                num_retry=self.robot.config.num_read_retries,
+                            )
+                            self.robot.bus.sync_write(
+                                "Goal_Position",
+                                positions,
+                            )
+                            self._holding = True
+            finally:
+                self._stop_finished.set()
+
+        def release_arm(self):
+            if not self._stop_finished.is_set():
+                raise RuntimeError(
+                    "Stop the client before releasing the arm"
+                )
+
+            with self._io_lock:
+                if any(
+                    thread.is_alive()
+                    for thread in getattr(self, "_workers", ())
+                ):
+                    raise RuntimeError(
+                        "Wait for policy workers to stop before releasing the arm"
+                    )
+
+                if self._released:
+                    return
+
+                bus = self.robot.bus
+                if bus.is_connected:
+                    bus.disable_torque(num_retry=5)
+                    bus.disconnect(disable_torque=False)
+
+                for camera in self.robot.cameras.values():
+                    if camera.is_connected:
+                        camera.disconnect()
+
+                self._released = True
+                lock.release()
 
     lock.acquire("rollout")
 
@@ -164,3 +321,205 @@ def connect_policy(client) -> None:
             )
     finally:
         client.logger.removeHandler(capture)
+
+
+def run_policy(
+    client,
+    *,
+    task: str,
+    time_limit_s: float,
+    stop_requested: Event | None = None,
+    on_state: Callable[[str], None] | None = None,
+    on_progress: Callable[[], None] | None = None,
+    on_stall: Callable[[dict], None] | None = None,
+) -> str:
+    if stop_requested is None:
+        stop_requested = Event()
+
+    errors = Queue()
+    capture = ClientErrorCapture()
+    client.logger.addHandler(capture)
+    workers = []
+    client._workers = workers
+
+    def worker(target):
+        try:
+            target()
+        except BaseException as exc:
+            if client.running:
+                errors.put(exc)
+
+    try:
+        if not math.isfinite(time_limit_s) or time_limit_s <= 0:
+            raise ValueError("time_limit_s must be a finite positive number")
+
+        if stop_requested.is_set():
+            return "user_stop"
+
+        if on_state is not None:
+            on_state("connecting")
+
+        connect_policy(client)
+
+        if on_state is not None:
+            on_state("running")
+
+        deadline = time.monotonic() + time_limit_s
+        next_progress = time.monotonic() + 0.2
+
+        for target in (
+            client.receive_actions,
+            lambda: client.control_loop(task=task),
+        ):
+            thread = Thread(
+                target=worker,
+                args=(target,),
+                daemon=True,
+            )
+            thread.start()
+            workers.append(thread)
+
+        while True:
+            try:
+                error = errors.get_nowait()
+            except Empty:
+                pass
+            else:
+                raise error
+
+            if capture.messages:
+                message = "\n".join(capture.messages)
+                if message.startswith((
+                    "Error receiving actions:",
+                    "Error sending observation",
+                )):
+                    raise PolicyConnectionError(message)
+                raise RuntimeError(message)
+
+            if stop_requested.is_set():
+                return "user_stop"
+
+            if not client.running:
+                return "stopped"
+
+            if any(not thread.is_alive() for thread in workers):
+                raise RuntimeError("A policy worker ended unexpectedly")
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "time_limit"
+
+            for event in client.stall_events():
+                if on_stall is not None:
+                    on_stall(event)
+
+            if (
+                on_progress is not None
+                and time.monotonic() >= next_progress
+            ):
+                on_progress()
+                next_progress = time.monotonic() + 0.2
+
+            stop_requested.wait(min(0.02, remaining))
+    finally:
+        try:
+            client.stop()
+        finally:
+            try:
+                client.start_barrier.abort()
+
+                join_deadline = time.monotonic() + 5.0
+                for thread in workers:
+                    thread.join(
+                        max(0.0, join_deadline - time.monotonic())
+                    )
+
+                if any(thread.is_alive() for thread in workers):
+                    raise RuntimeError(
+                        "Policy workers did not stop; hardware remains locked"
+                    )
+            finally:
+                client.logger.removeHandler(capture)
+
+
+def run_recorded_policy(
+    client,
+    *,
+    task: str,
+    time_limit_s: float,
+    recorder: TrialRecorder,
+    stop_requested: Event | None = None,
+) -> str:
+    connected = False
+
+    def report(state: str) -> None:
+        nonlocal connected
+        connected = state == "running"
+
+        recorder.event("accept" if connected else "connect")
+        recorder.write_status(
+            state=state,
+            task=task,
+            **client.metrics_snapshot(),
+        )
+
+    def progress() -> None:
+        recorder.write_status(
+            state="running",
+            task=task,
+            **client.metrics_snapshot(),
+        )
+
+    def record_stall(details: dict) -> None:
+        recorder.event("stall", **details)
+
+    def finish(state: str, reason: str, error=None) -> None:
+        event = {
+            "stopped": "stop",
+            "aborted": "abort",
+            "failed": "failure",
+        }[state]
+
+        for details in client.stall_events():
+            record_stall(details)
+        recorder.event(event, reason=reason, error=error)
+        recorder.write_status(
+            state=state,
+            task=task,
+            reason=reason,
+            error=error,
+            hold_command_sent=client._holding,
+            arm_released=client._released,
+            workers_stopped=all(
+                not thread.is_alive()
+                for thread in client._workers
+            ),
+            **client.metrics_snapshot(),
+        )
+
+    try:
+        reason = run_policy(
+            client,
+            task=task,
+            time_limit_s=time_limit_s,
+            stop_requested=stop_requested,
+            on_state=report,
+            on_progress=progress,
+            on_stall=record_stall,
+        )
+    except PolicyConnectionError as exc:
+        finish(
+            "aborted" if connected else "failed",
+            "connection",
+            str(exc),
+        )
+        raise
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            finish("stopped", "interrupted")
+        else:
+            finish("failed", "error", str(exc))
+        raise
+    else:
+        finish("stopped", reason)
+        return reason
