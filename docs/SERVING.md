@@ -266,3 +266,107 @@ timing a real one will. Replay's chunks matched the dataset exactly (mean MAE 0.
   blends the overlap with its `aggregate_fn_name` (default `weighted_average`). The
   first action of each chunk is labelled with the observation's timestep, which the
   client has already executed, so it is dropped.
+
+## 9. Robot-side rollout development
+
+`robot/rollout_client.py` provides the control helpers; `robot/rollout_worker.py`
+owns them in a dedicated process. It is not web-connected yet. Its recorded runner writes:
+
+| file, relative to the trial directory | content |
+|---|---|
+| `session.json` | immutable resolved client config, effective instruction, time limit, robot id, LeRobot version, Git commit and dirty state |
+| `status.json` | current state, action/chunk counts, queue/latency/stall metrics, stop state and optional preview availability/errors |
+| `events.jsonl` | append-only connection, acceptance, stall and terminal events |
+| `frames/<camera>.jpg` | latest preview JPEG from existing observations, using the names in `robot/config.py` |
+| `frames/frames.json` | observation capture timestamps and image dimensions |
+| `commands/<id>.json` | immutable Stop/Release request with the current trial token |
+| `command_results/<id>.json` | acknowledgement: accepted, completed, rejected or failed |
+
+Optional `TrialPreview` reuses the recording frame publisher. It copies frames
+before observation transport and encodes them outside the control thread, with
+one pending frame set and a 5 Hz limit. It opens no cameras. Capture timestamps,
+not JPEG modification times, determine freshness; frames older than 2 seconds
+are dropped and refused by the reader. Preview errors are reported independently
+of policy errors. Trial metadata and past events are never overwritten.
+
+The process entry point is `python -m robot.rollout_worker`, with the same
+required flags as the client parser: `--checkpoint`, `--task`, `--trial-dir`
+(a new directory), and `--max-relative-target`. Optional flags include `--server`
+and `--time-limit-s`. Starting it opens real hardware; do this only during a
+separately prepared hardware test. `--help` does not import RobotClient or open devices.
+The exact checkpoint string must match the selected server. Log files created by
+LeRobot's import are placed under the trial's `logs/`, not the repository root.
+Missing calibration is refused before connecting; native calibration mismatch
+is refused without interactive prompts or automatic recalibration.
+
+From another process, submit commands with:
+
+```bash
+python -m robot.rollout_commands stop --trial-dir=<trial-directory>
+python -m robot.rollout_commands release --trial-dir=<trial-directory>
+```
+
+The command prints a queued command id. Read `command_results/<id>.json` to
+confirm execution; queued or accepted is not completion. Status includes a
+per-trial token, PID, process start time and `process_alive`. The submitter checks
+process identity; the worker rejects malformed/stale requests and consumes each
+id once. These files are local IPC, not an authenticated network API.
+
+Stop cancels pending transport calls, ends policy workers and sends the existing
+hold command. Its acknowledgement completes after cleanup; a cleanup failure
+is reported as failed. Stop, the time limit and policy errors all retain device
+ownership and keep the process alive for Release. Release while policy cleanup
+is still active is rejected rather than queued for later execution. After
+cleanup, Release disables torque, disconnects devices and frees the hardware
+lock. A Release failure is recorded and can be retried with a new command id.
+Successful Release exits 0 for a normal trial, 1 if policy execution failed;
+initialization failure records the error and exits 1 without waiting for Release.
+The trial's stopped/failed state is retained after Release, with `arm_released`
+and `process_alive` updated.
+
+SIGINT/SIGTERM request Stop and leave the owner process waiting for Release.
+Do not use Runner's terminate/kill stop path for this worker: its escalation to
+SIGKILL cannot perform Release. Signal/Stop handling is not a hardware emergency
+stop and serial I/O or device initialization can delay it.
+
+Synthetic-image/fake-client tests cover this lifecycle, command acknowledgements,
+retry and a separate owner process receiving SIGTERM.
+
+### Hold transport integration without hardware
+
+`tests/test_rollout_hold_integration.py` starts the existing
+`research.serve_policy --fake=hold` server and the installed LeRobot 0.6.1
+RobotClient in separate processes over loopback gRPC. Only hardware construction
+is replaced by `tests/rollout_fake_worker.py`; observation serialization, chunk
+reception, action queue/control loop, rollout recording and command IPC are real.
+The helper is test-only and is not a fake mode for the production Run page.
+
+It creates temporary configuration files without model weights or recorded data.
+Synthetic observations have the joint order, camera names and dimensions from
+`robot/config.py`. Serial and VideoCapture opening are explicitly forbidden;
+hardware ownership is tested with an isolated lock rather than the actual arm
+lock. Outputs and subprocess logs remain under pytest's temporary directory.
+
+Run in the robot-side environment with LeRobot async support and pytest:
+
+```bash
+python -B -m pytest tests/test_rollout_hold_integration.py -q -p no:cacheprovider
+```
+
+All five scenarios passed on macOS with LeRobot 0.6.1:
+
+| scenario | verified behavior |
+|---|---|
+| explicit Stop | observations produce chunks/actions matching observed joints; preview appears; Stop retains ownership until Release |
+| time limit | policy stops at its limit and the owner waits for Release |
+| checkpoint mismatch | server refusal reaches failed status without policy actions |
+| camera shape mismatch | server refusal names shape mismatch without policy actions |
+| server disconnect | communication failure aborts the trial and retains ownership until Release |
+
+Every scenario checks worker cleanup, the final hold target, Release acknowledgement,
+torque-disable/disconnect calls on the fake devices, lock removal and process exit.
+Failed trials retain their failed/aborted status and exit 1 after successful Release.
+Local socket binding must be permitted to run these tests. This verifies actual
+protocol/control plumbing with synthetic hardware; it does not establish physical
+holding, emergency-stop timing, GPU inference or SSH tunnel behavior.
+Rollout API/UI and actual arm + local hold validation are still pending.

@@ -22,7 +22,8 @@ from robot.config import (
     POLICY_SERVER_PORT,
     RolloutGuardrails,
 )
-from robot.rollout_records import TrialRecorder
+from robot.rollout_preview import TrialPreview
+from robot.rollout_records import TrialRecorder, build_trial_metadata
 from robot.rollout_stalls import QueueStallTracker
 
 
@@ -130,6 +131,7 @@ def create_locked_client(
             self._stop_finished = Event()
             self._holding = False
             self._released = False
+            self._frame_publisher = None
             self._stats_lock = Lock()
             self._chunks_received = 0
             self._actions_executed = 0
@@ -233,6 +235,17 @@ def create_locked_client(
                 if self._stop_requested.is_set():
                     return None
                 return super().control_loop_observation(task, verbose)
+
+        def send_observation(self, observation):
+            if self._stop_requested.is_set():
+                return False
+            publisher = self._frame_publisher
+            if publisher is not None:
+                publisher.submit(
+                    observation.get_observation(),
+                    captured_at=observation.get_timestamp(),
+                )
+            return super().send_observation(observation)
 
         def stop(self):
             self._stop_requested.set()
@@ -359,7 +372,15 @@ def run_policy(
         if on_state is not None:
             on_state("connecting")
 
-        connect_policy(client)
+        try:
+            connect_policy(client)
+        except PolicyConnectionError:
+            if stop_requested.is_set():
+                return "user_stop"
+            raise
+
+        if stop_requested.is_set():
+            return "user_stop"
 
         if on_state is not None:
             on_state("running")
@@ -380,6 +401,8 @@ def run_policy(
             workers.append(thread)
 
         while True:
+            if stop_requested.is_set():
+                return "user_stop"
             try:
                 error = errors.get_nowait()
             except Empty:
@@ -449,6 +472,8 @@ def run_recorded_policy(
     time_limit_s: float,
     recorder: TrialRecorder,
     stop_requested: Event | None = None,
+    preview: TrialPreview | None = None,
+    session_prepared: bool = False,
 ) -> str:
     connected = False
 
@@ -456,11 +481,21 @@ def run_recorded_policy(
         nonlocal connected
         connected = state == "running"
 
+        if state == "connecting":
+            if not session_prepared:
+                recorder.write_session(build_trial_metadata(
+                    client.config, time_limit_s=time_limit_s, task=task,
+                ))
+            if preview is not None:
+                preview.start()
+                client._frame_publisher = preview
+
         recorder.event("accept" if connected else "connect")
         recorder.write_status(
             state=state,
             task=task,
             **client.metrics_snapshot(),
+            **(preview.status() if preview is not None else {}),
         )
 
     def progress() -> None:
@@ -468,12 +503,16 @@ def run_recorded_policy(
             state="running",
             task=task,
             **client.metrics_snapshot(),
+            **(preview.status() if preview is not None else {}),
         )
 
     def record_stall(details: dict) -> None:
         recorder.event("stall", **details)
 
     def finish(state: str, reason: str, error=None) -> None:
+        client._frame_publisher = None
+        if preview is not None:
+            preview.close()
         event = {
             "stopped": "stop",
             "aborted": "abort",
@@ -495,6 +534,7 @@ def run_recorded_policy(
                 for thread in client._workers
             ),
             **client.metrics_snapshot(),
+            **(preview.status() if preview is not None else {}),
         )
 
     try:

@@ -218,8 +218,8 @@ review; nobody pushes to main directly.
   GPU busy; successful model readiness and tunnel connectivity remain unverified.
 
 - Robot-side rollout is under development in `robot/rollout_client.py` and
-  `robot/rollout_records.py`; there is no executable entry point or rollout API/UI
-  wiring yet. Client creation takes the existing hardware lock first. Stop blocks
+  `robot/rollout_records.py`; rollout API/UI wiring is still pending.
+  Client creation takes the existing hardware lock first. Stop blocks
   new actions, closes inference communication and sends measured positions as hold
   targets while retaining torque, device connections and the lock. Only explicit
   Release arm disables torque and returns the lock after workers and devices are
@@ -236,8 +236,49 @@ review; nobody pushes to main directly.
   ended. Stall events are drained by the monitor and terminal recorder, not written
   by the control thread. Connection failures still abort, and time limits still
   stop trials. Fake-client tests cover lifecycle, recording, metrics and stalls;
-  actual LeRobot transport integration, preview frames, emergency-stop timing
-  and physical execution remain unverified or unimplemented.
+  actual LeRobot transport integration is also covered below. Emergency-stop
+  timing and physical execution remain unverified or unimplemented.
+
+- Rollout preview now uses `robot/rollout_preview.py` and the shared
+  `FramePublisher` from recording telemetry. It submits already acquired RGB
+  observations immediately before transport, never opens cameras, and performs
+  JPEG encoding/writes on a separate worker at most 5 Hz with one pending frame
+  set. `frames/frames.json` retains observation timestamps; frames older than 2 s
+  are rejected before/after encoding and when read, regardless of JPEG mtime.
+  Preview errors are exposed separately and do not abort policy control. The
+  preview worker closes after policy workers stop; stopped previews are not live.
+  Trial `session.json` is immutable and records full resolved client configuration,
+  effective instruction, time limit, robot id, LeRobot version and Git commit/dirty
+  state (null if unavailable). Metadata and previews are connected to
+  `run_recorded_policy`, with synthetic-image and fake-client tests plus the
+  actual hold transport tests below. Rollout API/UI and hardware validation remain pending.
+
+- `python -m robot.rollout_worker` now owns one rollout in a dedicated process;
+  `python -m robot.rollout_commands stop|release --trial-dir=...` submits per-id
+  command files. Results distinguish accepted from completed; trial tokens reject
+  stale commands and PID/start-time checks reject dead or reused owners. Stop,
+  time limits, errors and SIGINT/SIGTERM retain connections/torque/lock until
+  explicit Release. Release before worker cleanup is rejected; release failure
+  retains ownership for retry. Successful Release records release and exits
+  (1 after policy failure, otherwise 0). Initialization failure exits 1. Never
+  route ordinary Stop through Runner's terminate/kill escalation. Session metadata
+  is persisted before device construction. The real factory imports RobotClient
+  under the trial directory for logs and refuses absent/mismatched calibration
+  without prompting. Fake-client and subprocess signal tests cover process
+  ownership; actual hold transport is covered below. No real hardware has been opened.
+
+- `tests/test_rollout_hold_integration.py` launches the existing
+  `research.serve_policy --fake=hold` and installed LeRobot 0.6.1 RobotClient
+  in separate processes, using `tests/rollout_fake_worker.py` to replace only
+  hardware construction. Synthetic images use camera dimensions from
+  `robot/config.py`; a temporary checkpoint config fixes protocol features, with
+  no weights, dataset, GPU or SSH. Serial/VideoCapture opens are forbidden and
+  the test takes an isolated hardware lock. Five passing scenarios cover actual
+  observation/action transport and hold targets, Stop/Release, time limit,
+  checkpoint/shape refusal and server disconnect. Terminal states retain the
+  owner/lock until Release; failed trials exit 1 after successful Release.
+  These are communication/ownership checks, not physical holding or timing
+  validation. Lab API/web rollout wiring and actual arm + local hold remain next.
 
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.

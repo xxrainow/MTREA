@@ -1,7 +1,10 @@
 import json
 import logging
+import time
+from dataclasses import dataclass, field
 from queue import Queue
 from threading import Barrier, Event, Lock
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -16,7 +19,22 @@ from robot.rollout_client import (
     run_recorded_policy,
 )
 from robot.rollout_records import TrialRecorder
+from robot.rollout_preview import TrialPreview
 from robot.rollout_stalls import QueueStallTracker
+
+
+@dataclass
+class FakeRobotConfig:
+    id: str = "test-follower"
+    type: str = "mock_robot"
+
+
+@dataclass
+class FakeClientConfig:
+    robot: FakeRobotConfig = field(default_factory=FakeRobotConfig)
+    pretrained_name_or_path: str = "fake-checkpoint"
+    server_address: str = "127.0.0.1:8765"
+    task: str = "Hold position"
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -128,6 +146,7 @@ def stoppable_client(tmp_path):
             self.shutdown_event = Event()
             self.start_barrier = Barrier(2)
             self.logger = logging.getLogger("tests.rollout.running")
+            self.config = FakeClientConfig()
             self.action_queue = Queue()
             self.action_queue_lock = Lock()
 
@@ -153,7 +172,16 @@ def stoppable_client(tmp_path):
             self.robot.send_action({"gripper.pos": 30.0})
 
         def control_loop_observation(self, task, verbose=False):
-            return self.robot.get_observation()
+            raw = self.robot.get_observation()
+            captured = time.time()
+            self.send_observation(SimpleNamespace(
+                get_observation=lambda: raw,
+                get_timestamp=lambda: captured,
+            ))
+            return raw
+
+        def send_observation(self, observation):
+            return True
 
         def _aggregate_action_queues(self, incoming_actions, aggregate_fn=None):
             with self.action_queue_lock:
@@ -526,3 +554,105 @@ def test_recorded_stall_keeps_trial_alive_and_records_end(
     client.robot.bus.sync_write.assert_called_once_with(
         "Goal_Position", {"gripper": 20.0}
     )
+
+
+def test_recorded_run_publishes_existing_observations_and_session(
+    stoppable_client, tmp_path
+):
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("cv2")
+    from robot.config import CAMERAS
+
+    client, lock = stoppable_client
+    image = np.zeros((24, 32, 3), dtype=np.uint8)
+    client.robot.get_observation.return_value = {
+        camera.name: image for camera in CAMERAS
+    }
+    recorder = TrialRecorder(tmp_path / "trial")
+    preview = TrialPreview(recorder.root)
+    run_recorded_policy(
+        client, task="Effective instruction", time_limit_s=0.25,
+        recorder=recorder, preview=preview,
+    )
+    status = json.loads(recorder.status_path.read_text())
+    session = json.loads(recorder.session_path.read_text())
+    assert status["state"] == "stopped"
+    assert status["preview_active"] is False
+    assert status["preview_error"] is None
+    assert session["task"] == "Effective instruction"
+    assert session["configuration"]["robot"]["type"] == "mock_robot"
+    for camera in CAMERAS:
+        assert (preview.root / f"{camera.name}.jpg").is_file()
+    assert client._frame_publisher is None
+    assert lock.held
+
+
+def test_preview_encoding_error_does_not_abort_policy(stoppable_client, tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from robot.config import CAMERAS
+
+    monkeypatch.setitem(sys.modules, "cv2", SimpleNamespace(
+        COLOR_RGB2BGR=1, IMWRITE_JPEG_QUALITY=2,
+        cvtColor=lambda frame, _: frame, imencode=lambda *_: (False, None),
+    ))
+    frame = SimpleNamespace(shape=(2, 2, 3))
+    frame.copy = lambda: frame
+    client, lock = stoppable_client
+    client.robot.get_observation.return_value = {
+        camera.name: frame for camera in CAMERAS
+    }
+    recorder = TrialRecorder(tmp_path / "trial")
+    preview = TrialPreview(recorder.root)
+    reason = run_recorded_policy(
+        client, task="Hold position", time_limit_s=0.1,
+        recorder=recorder, preview=preview,
+    )
+    status = json.loads(recorder.status_path.read_text())
+    assert reason == "time_limit"
+    assert status["state"] == "stopped"
+    assert "Cannot encode" in status["preview_error"]
+    assert status["actions_executed"] > 0
+    assert lock.held
+
+
+def test_preview_receives_capture_before_transport(stoppable_client, monkeypatch):
+    client, _ = stoppable_client
+    publisher = Mock()
+    client._frame_publisher = publisher
+    raw = {"observation": "already captured"}
+    observation = SimpleNamespace(
+        get_observation=lambda: raw,
+        get_timestamp=lambda: 123.0,
+    )
+
+    def transport(self, received):
+        publisher.submit.assert_called_once_with(raw, captured_at=123.0)
+        assert received is observation
+        return True
+
+    monkeypatch.setattr(type(client).__bases__[0], "send_observation", transport)
+    assert client.send_observation(observation) is True
+
+
+def test_session_write_failure_stops_before_server_connection(
+    stoppable_client, tmp_path, monkeypatch
+):
+    client, lock = stoppable_client
+    recorder = TrialRecorder(tmp_path / "trial")
+    start = Mock()
+    monkeypatch.setattr(client, "start", start)
+
+    def fail_write(metadata):
+        raise OSError("session write failed")
+
+    monkeypatch.setattr(recorder, "write_session", fail_write)
+    with pytest.raises(OSError, match="session write failed"):
+        run_recorded_policy(
+            client, task="Hold position", time_limit_s=1,
+            recorder=recorder,
+        )
+    start.assert_not_called()
+    assert not client.running
+    assert lock.held
+    assert json.loads(recorder.status_path.read_text())["state"] == "failed"
