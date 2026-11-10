@@ -20,7 +20,10 @@ from lab.server import datasets_api
 from lab.server import remote_api
 from lab.server import train_api
 from lab.server import serve_api
+from lab.server import rollout_api
+from lab.core.rollout import RolloutService
 from lab.core.remote import RemoteError, RemoteNotConfigured, load_remote
+from lab.core.runner import JobConflict
 
 
 def create_app(
@@ -57,6 +60,7 @@ def create_app(
             data_base=resolved_data
         )
         app.state.collection_gate = Lock()
+        app.state.rollout = RolloutService(data_base=resolved_data)
         app.state.data_base = resolved_data
         app.state.remote_config = remote_config
         app.state.remote_transport = remote_transport
@@ -102,6 +106,7 @@ def create_app(
     application.include_router(remote_api.router)
     application.include_router(train_api.router)
     application.include_router(serve_api.router)
+    application.include_router(rollout_api.router)
 
     return application
 
@@ -176,6 +181,8 @@ def stop_job(job_id: str, request: Request) -> dict:
 
         try:
             stopped_job = runner.stop(job_id)
+        except JobConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except RemoteError as e:
             raise HTTPException(
                 status_code=503,

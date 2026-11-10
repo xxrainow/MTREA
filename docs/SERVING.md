@@ -369,4 +369,63 @@ Failed trials retain their failed/aborted status and exit 1 after successful Rel
 Local socket binding must be permitted to run these tests. This verifies actual
 protocol/control plumbing with synthetic hardware; it does not establish physical
 holding, emergency-stop timing, GPU inference or SSH tunnel behavior.
-Rollout API/UI and actual arm + local hold validation are still pending.
+The additional Lab API integration test launches the same actual hold server and
+fake-hardware client through the job executor, requests Stop, restarts the backend,
+recovers the owner from disk, and requests Release. It also checks that Jobs Stop
+does not terminate the owner and that the worker uses the Lab's shared hardware
+lock path. The test substitutes only the worker's hardware factory/launch command.
+Web wiring and actual arm + local hold validation are still pending.
+
+### Lab rollout API
+
+The backend exposes this file-backed contract; no browser state is required to
+recover the selected job after a backend restart:
+
+| endpoint | behavior |
+|---|---|
+| `POST /api/rollouts/check` | read-only configuration, server/tunnel and ownership checks |
+| `POST /api/rollouts/start` | recheck and submit a local robot-owner job; returns 201 with its snapshot |
+| `GET /api/rollouts` | newest-first rollout job snapshots |
+| `GET /api/rollouts/<job_id>` | job, effective state, worker status, session metadata, owner liveness and read error |
+| `POST /api/rollouts/<job_id>/stop` | submit Stop; returns 202 and command id |
+| `POST /api/rollouts/<job_id>/release` | submit Release after a terminal policy state; returns 202 and command id |
+| `GET /api/rollouts/<job_id>/commands/<command_id>` | queued, accepted, completed, rejected or failed acknowledgement |
+| `GET /api/rollouts/<job_id>/logs?tail_lines=100` | existing job stdout/stderr log, bounded to 1–1000 lines |
+
+Check/Start accept exactly `server_job_id`, nonblank `instruction`, positive finite
+`max_relative_target` and `time_limit_s`. They do not accept arbitrary commands,
+checkpoint paths or network addresses. The checkpoint comes from the selected
+server job; local hold uses its recorded local port, SSH uses the existing running
+tunnel at the robot-side loopback endpoint. The HTTP handler delegates to
+`lab/core/rollout.py`, which reuses `serving.session_status` and Runner.
+
+Start stops standalone preview after passing preflight, then launches
+`python -m robot.rollout_worker` on this machine, even when inference is on SSH.
+The trial gets a unique directory under `<data_dir>/rollouts/robot/`. The data
+root is passed to the child so its hardware lock matches collection/calibration/
+teleoperation. LocalExecutor uses the stored argv without a shell for these jobs;
+instruction text cannot become shell syntax. The display command is still saved
+for provenance. Fake hardware mode refuses real rollout Start.
+
+Start is refused while collection or another rollout owns the devices. An active
+rollout job continues to block new rollout, collection and standalone preview
+after Stop and until Release/process exit. This check also covers startup before
+the child acquires its hardware lock. The child lock remains the final authority
+against other CLI/hardware processes.
+
+`POST /api/jobs/<job_id>/stop` routes rollout jobs through the same Stop channel;
+Runner never applies its terminate/kill path to them. A channel that is not ready
+returns 409, not a forced stop. Release before a terminal policy state returns 409.
+The worker still checks real worker-thread liveness before releasing devices;
+failed cleanup can be retried after a delayed thread finishes. A 202 response
+only means submission: clients must inspect the acknowledgement and status.
+
+Owner liveness checks PID and process start time, independently of the job ledger.
+Stale active status with a missing/reused owner is exposed as `ended_unknown`,
+never as verified Stop/Release. Raw worker status remains available for diagnosis.
+Backend shutdown does not automatically release a surviving owner. Job exit status
+may be unknown after restart because LocalExecutor loses Popen handles; the trial
+files still retain the stopped/failed state and Release result.
+
+Web Start/Stop/Release, rollout preview HTTP access and physical validation remain
+separate next steps.

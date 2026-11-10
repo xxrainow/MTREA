@@ -36,6 +36,9 @@ def camera_status(request: Request) -> dict:
 @router.post("/start")
 def camera_start(request: Request) -> dict:
     with request.app.state.collection_gate:
+        with request.app.state.runner_lock:
+            if request.app.state.rollout.is_active(request.app.state.runner):
+                raise HTTPException(409, "Release the rollout devices before starting camera preview")
         if request.app.state.collection.is_active():
             raise HTTPException(
                 status_code=409,

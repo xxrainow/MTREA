@@ -10,17 +10,25 @@ import psutil
 from lab.core.recording_telemetry import atomic_write
 
 
+def owner_alive(status: dict) -> bool:
+    try:
+        if not status.get("process_alive"):
+            return False
+        process = psutil.Process(status["pid"])
+        return (abs(process.create_time() - status["process_started"]) <= 0.01
+                and process.status() not in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD})
+    except (psutil.Error, KeyError, TypeError, ValueError):
+        return False
+
+
 def submit_command(trial_dir: Path, action: str) -> str:
     if action not in {"stop", "release"}:
         raise ValueError("Expected stop or release")
     status = json.loads((trial_dir / "status.json").read_text())
     if not status.get("process_alive"):
         raise RuntimeError("Trial process is not accepting commands")
-    try:
-        if abs(psutil.Process(status["pid"]).create_time() - status["process_started"]) > 0.01:
-            raise RuntimeError("Trial process identity has changed")
-    except psutil.Error as exc:
-        raise RuntimeError("Trial process is no longer available") from exc
+    if not owner_alive(status):
+        raise RuntimeError("Trial process is no longer available or its identity has changed")
     command_id = uuid4().hex
     directory = trial_dir / "commands"
     directory.mkdir(exist_ok=True)

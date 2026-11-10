@@ -10,6 +10,7 @@ from uuid import uuid4
 import psutil
 
 from lab.core.hardware.lock import HardwareLock
+from lab.core import paths
 from robot.rollout_client import (
     build_client_config, build_parser, create_locked_client, run_recorded_policy,
 )
@@ -143,7 +144,8 @@ def main(argv=None):
         previous[signum] = signal.signal(signum, lambda *_: stop.set())
     try:
         return run_process(config, trial_dir=args.trial_dir,
-                           time_limit_s=args.time_limit_s, stop_requested=stop)
+                           time_limit_s=args.time_limit_s, stop_requested=stop,
+                           lock=HardwareLock(paths.hardware_lock(args.data_dir)))
     except Exception as exc:
         print(json.dumps({"state": "failed", "error": str(exc)}), flush=True)
         return 1

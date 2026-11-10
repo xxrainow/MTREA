@@ -278,7 +278,26 @@ review; nobody pushes to main directly.
   checkpoint/shape refusal and server disconnect. Terminal states retain the
   owner/lock until Release; failed trials exit 1 after successful Release.
   These are communication/ownership checks, not physical holding or timing
-  validation. Lab API/web rollout wiring and actual arm + local hold remain next.
+  validation. The additional API/restart integration below also passes.
+
+- Lab rollout API now exposes check/start, list/detail, Stop/Release, per-command
+  acknowledgements and job logs under `/api/rollouts`. `lab/core/rollout.py`
+  reuses serving's session/tunnel checks and Runner; checkpoints/addresses come
+  from selected server jobs, never request-supplied strings. Trials live under
+  `<data_dir>/rollouts/robot/<unique_id>`. The local owner receives `--data-dir`
+  so its hardware lock matches the backend's shared lock. Rollout LocalExecutor
+  starts stored argv without a shell. Jobs Stop routes rollout jobs to command
+  IPC and never terminate/kill; a missing/unready channel is 409. Start stops
+  standalone camera preview only after preflight, refuses fake hardware mode,
+  and serialized starts cannot overlap. Pending/running/stopped-but-owned rollout
+  jobs block new rollout, collection and standalone camera preview. PID/start-time
+  and file-backed status recover ownership after backend restart; dead owners with
+  stale active files are `ended_unknown`. Backend shutdown leaves owners alive
+  until explicit Release. Release requires terminal policy state; the worker
+  verifies actual thread cleanup and permits retries. API and actual hold + fake
+  hardware process tests cover start, Stop, backend restart, Jobs Stop and Release
+  using the Lab data-root lock. No physical hardware has been opened. Web controls,
+  preview HTTP access, GPU/SSH validation and actual arm + local hold remain pending.
 
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.

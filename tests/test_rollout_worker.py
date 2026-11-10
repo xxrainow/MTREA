@@ -174,6 +174,18 @@ def test_initialization_failure_records_without_waiting(tmp_path):
     assert (tmp_path / "session.json").exists()
 
 
+def test_main_uses_labs_shared_data_root_for_hardware_lock(tmp_path, monkeypatch):
+    from robot import rollout_worker
+    monkeypatch.setattr(rollout_worker, "build_client_config", lambda _: FakeClientConfig())
+    run = Mock(return_value=0)
+    monkeypatch.setattr(rollout_worker, "run_process", run)
+    assert rollout_worker.main([
+        "--checkpoint=test", "--task=hold", f"--trial-dir={tmp_path / 'trial'}",
+        f"--data-dir={tmp_path / 'lab-data'}", "--max-relative-target=5",
+    ]) == 0
+    assert run.call_args.kwargs["lock"].path == tmp_path / "lab-data" / "locks" / "hardware.lock"
+
+
 def test_stale_malformed_and_duplicate_commands(tmp_path):
     inbox = CommandInbox(tmp_path, "current")
     (inbox.commands / "old.json").write_text(json.dumps({

@@ -64,6 +64,9 @@ def start_collection(
 
     try:
         with request.app.state.collection_gate:
+            with request.app.state.runner_lock:
+                if request.app.state.rollout.is_active(request.app.state.runner):
+                    raise SessionStateError("Release the rollout devices before starting collection")
             if service.is_active():
                 raise SessionStateError(
                     "Collection is already active"

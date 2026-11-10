@@ -150,3 +150,101 @@ def test_hold_protocol_and_owner_lifecycle(hold_system, mode):
     metadata = read(trial / "session.json")
     assert metadata["lerobot_version"] == "0.6.1"
     assert metadata["git_commit"] and metadata["robot_id"] == "synthetic"
+
+
+def test_lab_api_drives_hold_owner_across_backend_restart(hold_system):
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+
+    from lab.core import paths, serving
+    from lab.core.executors.local import LocalExecutor
+    from lab.core.models import Executor, Job, JobKind, JobSpec, JobStatus
+    from lab.server.main import create_app
+
+    server, session, _, root = hold_system
+    data = root / "lab-data"
+    port = read(session / "status.json")["port"]
+    checkpoint = str(root / "synthetic-checkpoint")
+    children = []
+
+    class FakeHardwareExecutor(LocalExecutor):
+        def start(self, spec, log_path):
+            if spec.kind == JobKind.ROLLOUT:
+                runtime = {"data_dir": str(data), "task": spec.metadata["instruction"],
+                           "time_limit_s": spec.metadata["time_limit_s"]}
+                argv = [sys.executable, "-B", str(REPO / "tests" / "rollout_fake_worker.py"),
+                        spec.run_dir, spec.metadata["server_address"],
+                        spec.metadata["checkpoint"], "stop", json.dumps(runtime)]
+                pid = super().start(replace(spec, cmd=serving.command(argv),
+                                           metadata={**spec.metadata, "argv": argv}), log_path)
+                children.append(self._procs[pid])
+                return pid
+            return super().start(spec, log_path)
+
+    def app():
+        return create_app(data_base=data, remote_config=root / "no-remote.yaml")
+
+    def state(client, job_id):
+        response = client.get(f"/api/rollouts/{job_id}")
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def command_done(client, job_id, command_id):
+        response = client.get(f"/api/rollouts/{job_id}/commands/{command_id}")
+        assert response.status_code == 200, response.text
+        return response.json().get("state") == "completed"
+
+    body = {"server_job_id": "real-hold", "instruction": "Synthetic API hold",
+            "max_relative_target": 5.0, "time_limit_s": 30.0}
+    try:
+        with TestClient(app()) as client:
+            client.app.state.runner.executors[Executor.LOCAL] = FakeHardwareExecutor(REPO)
+            client.app.state.runner.store.save(Job(
+                id="real-hold", pid=server.pid, status=JobStatus.RUNNING,
+                spec=JobSpec(kind=JobKind.SERVE_POLICY, cmd="already running hold server",
+                             run_dir=str(session), metadata={"checkpoint": checkpoint,
+                                                             "server_port": port}),
+            ))
+            assert client.post("/api/rollouts/check", json=body).status_code == 200
+            response = client.post("/api/rollouts/start", json=body)
+            assert response.status_code == 201, response.text
+            job_id = response.json()["job"]["id"]
+            wait_for(lambda: (state(client, job_id).get("status") or {}).get("actions_executed", 0) >= 3,
+                     processes=[server, children[0]])
+            assert paths.hardware_lock(data).exists()
+            assert client.post("/api/rollouts/start", json=body).status_code == 409
+            response = client.post(f"/api/rollouts/{job_id}/stop")
+            assert response.status_code == 202
+            wait_for(lambda: command_done(client, job_id, response.json()["command_id"]),
+                     processes=[server, children[0]])
+            assert state(client, job_id)["state"] == "stopped"
+            assert state(client, job_id)["owner_alive"]
+
+        # Restart drops executor Popen handles; ledger + PID/start-time still recover ownership.
+        with TestClient(app()) as restarted:
+            restored = state(restarted, job_id)
+            assert restored["owner_alive"] and restored["status"]["workers_stopped"]
+            assert restarted.get("/api/rollouts").json()[0]["job"]["id"] == job_id
+            assert restarted.post("/api/cameras/start").status_code == 409
+            assert restarted.post(f"/api/jobs/{job_id}/stop").status_code == 200
+            assert children[0].poll() is None and paths.hardware_lock(data).exists()
+            response = restarted.post(f"/api/rollouts/{job_id}/release")
+            assert response.status_code == 202
+            wait_for(lambda: command_done(restarted, job_id, response.json()["command_id"]),
+                     processes=[server])
+            children[0].wait(timeout=10)
+            assert children[0].returncode == 0 and not paths.hardware_lock(data).exists()
+            final = state(restarted, job_id)
+            assert final["status"]["arm_released"] and not final["owner_alive"]
+            assert restarted.get(f"/api/rollouts/{job_id}/logs").status_code == 200
+    finally:
+        for child in children:
+            if child.poll() is None:
+                # The helper forbids hardware access; forcibly clean up a failed test.
+                import psutil
+                process = psutil.Process(child.pid)
+                for descendant in process.children(recursive=True):
+                    descendant.kill()
+                child.kill()
+            child.wait(timeout=10)

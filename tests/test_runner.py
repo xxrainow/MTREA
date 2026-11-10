@@ -108,12 +108,24 @@ def test_rollout_jobs_do_not_overlap(runner: Runner) -> None:
                 JobSpec(kind=JobKind.ROLLOUT, cmd=py("pass"))
             )
     finally:
-        runner.stop(first.id)
+        # These dummy commands have no robot command channel; test cleanup only.
+        runner.executors[Executor.LOCAL].stop(first.pid)
+        runner.refresh()
 
     again = runner.submit(
         JobSpec(kind=JobKind.ROLLOUT, cmd=py("pass"))
     )
     assert _wait(runner, again.id) == JobStatus.DONE
+
+
+def test_rollout_executes_argv_without_shell_interpreting_instruction(runner: Runner):
+    instruction = 'Hold "block"; $(false) & | < >'
+    job = runner.submit(JobSpec(
+        kind=JobKind.ROLLOUT, cmd="must never execute this display command",
+        metadata={"argv": [sys.executable, "-c", "import sys; print(sys.argv[1])", instruction]},
+    ))
+    assert _wait(runner, job.id) == JobStatus.DONE
+    assert runner.read_log(job.id).strip() == instruction
 
 def test_ledger_survives_restart(runner: Runner, tmp_path: Path) -> None:
     job = runner.submit(JobSpec(kind=JobKind.CONVERT, cmd="echo persisted"))

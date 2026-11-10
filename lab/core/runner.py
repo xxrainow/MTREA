@@ -17,6 +17,7 @@ from lab.core.executors.base import BaseExecutor, read_local_log
 from lab.core.models import Executor, Job, JobKind, JobSpec, JobStatus
 from lab.core.remote import RemoteError
 from lab.core.store import JobStore
+from robot.rollout_commands import submit_command
 
 
 class JobConflict(RuntimeError):
@@ -149,6 +150,15 @@ class Runner:
         job = self.store.get(job_id)
         if job is None:
             raise KeyError(job_id)
+        if (job.spec.kind == JobKind.ROLLOUT
+                and job.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.UNKNOWN}):
+            if not job.spec.run_dir:
+                raise JobConflict("Rollout Stop requires a trial command channel")
+            try:
+                submit_command(Path(job.spec.run_dir), "stop")
+            except (OSError, ValueError, RuntimeError, KeyError) as exc:
+                raise JobConflict(f"Rollout Stop is unavailable: {exc}") from exc
+            return job
         if job.spec.kind == JobKind.SERVE_POLICY:
             for tunnel in self.store.list():
                 if (

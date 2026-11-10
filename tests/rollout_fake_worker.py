@@ -115,7 +115,8 @@ def main():
     from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
     from lerobot.robots.so_follower import SO101FollowerConfig
 
-    trial, server, checkpoint, mode = sys.argv[1:]
+    trial, server, checkpoint, mode = sys.argv[1:5]
+    runtime = json.loads(sys.argv[5]) if len(sys.argv) > 5 else {}
     # Any accidental fallback to native device creation fails before opening I/O.
     cv2.VideoCapture = forbid_hardware
     serial.Serial = forbid_hardware
@@ -130,13 +131,15 @@ def main():
         robot=SO101FollowerConfig(port="FORBIDDEN", id="synthetic", cameras=cameras,
                                   use_degrees=True, max_relative_target=5.0,
                                   disable_torque_on_disconnect=False),
-        server_address=server, task="Synthetic hold integration", fps=FPS,
+        server_address=server, task=runtime.get("task", "Synthetic hold integration"), fps=FPS,
         actions_per_chunk=50, client_device="cpu",
     )
     return run_process(config, trial_dir=Path(trial),
-                       time_limit_s=1.5 if mode == "time_limit" else 30,
+                       time_limit_s=runtime.get("time_limit_s", 1.5 if mode == "time_limit" else 30),
                        client_factory=create_fake_client,
-                       lock=HardwareLock(Path(trial).parent / "test-hardware.lock"))
+                       lock=HardwareLock(
+                           Path(runtime["data_dir"]) / "locks" / "hardware.lock"
+                           if "data_dir" in runtime else Path(trial).parent / "test-hardware.lock"))
 
 
 if __name__ == "__main__":

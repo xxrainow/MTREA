@@ -54,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--task", required=True)
     parser.add_argument("--trial-dir", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument(
         "--max-relative-target",
         type=positive_float,
