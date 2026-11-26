@@ -3,7 +3,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from queue import Queue
-from threading import Barrier, Event, Lock
+from threading import Barrier, Event, Lock, Thread
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -35,6 +35,7 @@ class FakeClientConfig:
     pretrained_name_or_path: str = "fake-checkpoint"
     server_address: str = "127.0.0.1:8765"
     task: str = "Hold position"
+    fps: int = 30
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -161,12 +162,11 @@ def stoppable_client(tmp_path):
             self.start_barrier.wait()
             self.shutdown_event.wait()
 
-        def control_loop(self, task):
-            self.start_barrier.wait()
-            while self.running:
-                self.control_loop_action()
-                self.control_loop_observation(task)
-                self.shutdown_event.wait(0.01)
+        def actions_available(self):
+            return True
+
+        def _ready_to_send_observation(self):
+            return True
 
         def control_loop_action(self, verbose=False):
             self.robot.send_action({"gripper.pos": 30.0})
@@ -468,6 +468,37 @@ def test_client_counts_chunks_actions_and_latency(stoppable_client, monkeypatch)
     assert metrics["max_latency_ms"] == pytest.approx(250.0)
 
 
+def test_refill_during_capture_does_not_send_an_obsolete_observation(stoppable_client):
+    client, _ = stoppable_client
+    client.control_loop_observation("Hold")
+    assert client.metrics_snapshot()["observation_sender"]["pending"] == 1
+    incoming = Mock()
+    incoming.get_timestamp.return_value = time.time()
+
+    def capture_during_refill():
+        client._aggregate_action_queues([incoming])
+        return {"gripper.pos": 20.0}
+
+    client.robot.get_observation.side_effect = capture_during_refill
+    client.control_loop_observation("Hold")
+    sender = client.metrics_snapshot()["observation_sender"]
+    assert sender["pending"] == 0 and sender["superseded"] == 2
+    client.robot.get_observation.side_effect = None
+    client.control_loop_observation("Hold")
+    assert client.metrics_snapshot()["observation_sender"]["pending"] == 1
+
+
+def test_empty_chunk_merge_keeps_pending_observation(stoppable_client, monkeypatch):
+    client, _ = stoppable_client
+    client.control_loop_observation("Hold")
+    incoming = Mock()
+    incoming.get_timestamp.return_value = time.time()
+    monkeypatch.setattr(type(client).__bases__[0], "_aggregate_action_queues", lambda *_: None)
+    client._aggregate_action_queues([incoming])
+    sender = client.metrics_snapshot()["observation_sender"]
+    assert sender["pending"] == 1 and sender["superseded"] == 0
+
+
 def test_failed_action_is_not_counted(stoppable_client):
     client, _ = stoppable_client
     client.robot.send_action.side_effect = OSError("send failed")
@@ -476,6 +507,83 @@ def test_failed_action_is_not_counted(stoppable_client):
         client.control_loop_action()
 
     assert client.metrics_snapshot()["actions_executed"] == 0
+
+
+def test_client_stage_timings_reach_recorded_status(stoppable_client, tmp_path):
+    client, _ = stoppable_client
+    client.control_loop_action()
+    client.control_loop_action()
+    client.control_loop_observation("Hold position")
+    timing = client.metrics_snapshot()["timing"]
+    assert timing["action_total"]["count"] == 2
+    assert timing["action_interval"]["count"] == 1
+    assert timing["observation_total"]["count"] == 1
+    assert timing["observation_enqueue"]["count"] == 1
+    recorder = TrialRecorder(tmp_path / "timing-trial")
+    recorder.write_status(state="running", **client.metrics_snapshot())
+    assert json.loads(recorder.status_path.read_text())["timing"] == timing
+
+
+def test_instrumented_io_reports_nested_stages_and_still_releases(stoppable_client):
+    client, lock = stoppable_client
+    robot = client.robot
+
+    def observation():
+        robot.cameras["scene"].read_latest()
+        return robot.bus.sync_read("Present_Position")
+
+    def action(values):
+        robot.bus.sync_read("Present_Position")
+        robot.bus.sync_write("Goal_Position", values)
+        return values
+
+    robot.get_observation.side_effect = observation
+    robot.send_action.side_effect = action
+    client.instrument_robot_timing()
+    client.control_loop_observation("Hold position")
+    client.control_loop_action()
+    timing = client.metrics_snapshot()["timing"]
+    assert timing["camera_read:scene"]["count"] == 1
+    assert timing["serial_read"]["count"] == 2
+    assert timing["serial_write"]["count"] == 1
+    assert timing["robot_send_action"]["count"] == 1
+    assert timing["observation_read"]["count"] == 1
+    client.stop()
+    assert lock.held
+    client.release_arm()
+    assert not lock.held
+
+
+def test_joint_tracking_distinguishes_requested_clamped_and_measured_without_extra_io(stoppable_client):
+    client, _ = stoppable_client
+    robot = client.robot
+    read = robot.bus.sync_read
+    send = robot.send_action
+    robot.get_observation.return_value = {"gripper.pos": 20.0, "scene": object()}
+
+    def clamped(action):
+        robot.bus.sync_read("Present_Position", num_retry=2)
+        return {"gripper.pos": 21.0}
+
+    send.side_effect = clamped
+    client.instrument_robot_timing()
+    client.control_loop_observation("Hold")
+    client.control_loop_action()
+    tracking = client.metrics_snapshot()["joint_tracking"]
+    assert tracking["observed"]["positions"] == {"gripper": 20.0}
+    assert tracking["measured"]["positions"] == {"gripper": 20.0}
+    assert tracking["action"]["requested"] == {"gripper": 30.0}
+    assert tracking["action"]["sent"] == {"gripper": 21.0}
+    assert tracking["clamped_actions"] == 1
+    assert read.call_count == 1
+    assert send.call_count == 1
+
+
+def test_joint_tracking_does_not_treat_raw_encoder_steps_as_joint_units(stoppable_client):
+    client, _ = stoppable_client
+    client.instrument_robot_timing()
+    client.robot.bus.sync_read("Present_Position", normalize=False)
+    assert client.metrics_snapshot()["joint_tracking"]["measured"] is None
 
 
 def test_running_metrics_are_written_before_stop(
@@ -626,13 +734,126 @@ def test_preview_receives_capture_before_transport(stoppable_client, monkeypatch
         get_timestamp=lambda: 123.0,
     )
 
+    sent = Event()
+
     def transport(self, received):
         publisher.submit.assert_called_once_with(raw, captured_at=123.0)
-        assert received is observation
+        assert received is not observation
+        assert received.get_timestamp() == 123.0
+        sent.set()
         return True
 
     monkeypatch.setattr(type(client).__bases__[0], "send_observation", transport)
     assert client.send_observation(observation) is True
+    thread = Thread(target=client.send_observations)
+    thread.start()
+    try:
+        assert sent.wait(2)
+    finally:
+        client.stop()
+        thread.join(2)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("termination", ["user_stop", "time_limit"])
+def test_slow_transport_does_not_block_actions_and_stop_drops_pending(
+    stoppable_client, monkeypatch, termination,
+):
+    client, lock = stoppable_client
+    entered, cancelled, finished = Event(), Event(), Event()
+    stop = Event()
+    results = []
+    sends = []
+
+    def slow_transport(self, observation):
+        sends.append(observation)
+        entered.set()
+        assert cancelled.wait(3)
+        return False
+
+    monkeypatch.setattr(type(client).__bases__[0], "send_observation", slow_transport)
+    client.channel.close.side_effect = cancelled.set
+
+    def run():
+        try:
+            results.append(run_policy(
+                client, task="Hold", time_limit_s=1 if termination == "time_limit" else 3,
+                stop_requested=stop,
+            ))
+        finally:
+            finished.set()
+
+    runner = Thread(target=run)
+    runner.start()
+    try:
+        assert entered.wait(2)
+        before = client.metrics_snapshot()["actions_executed"]
+        deadline = time.monotonic() + 1
+        while client.metrics_snapshot()["actions_executed"] < before + 8:
+            assert time.monotonic() < deadline, "Actions blocked behind transport"
+            time.sleep(0.005)
+        sender = client.metrics_snapshot()["observation_sender"]
+        assert sender["pending"] == 1 and sender["in_flight"]
+        assert sender["replaced"] > 0
+    finally:
+        if termination == "user_stop":
+            stop.set()
+        runner.join(4)
+        stop.set()
+        cancelled.set()
+    assert finished.is_set() and results == [termination]
+    assert len(sends) == 1
+    assert all(not thread.is_alive() for thread in client._workers)
+    assert client.metrics_snapshot()["observation_sender"]["pending"] == 0
+    assert lock.held and client._holding
+    client.release_arm()
+    assert not lock.held
+
+
+@pytest.mark.parametrize("failure", ["exception", "false"])
+def test_sender_failure_aborts_trial_and_retains_lock(stoppable_client, monkeypatch, failure):
+    client, lock = stoppable_client
+
+    def transport(self, observation):
+        if failure == "exception":
+            raise OSError("transport exploded")
+        return False
+
+    monkeypatch.setattr(type(client).__bases__[0], "send_observation", transport)
+    error = OSError if failure == "exception" else PolicyConnectionError
+    with pytest.raises(error):
+        run_policy(client, task="Hold", time_limit_s=2)
+    assert lock.held and client._holding
+    assert all(not thread.is_alive() for thread in client._workers)
+    client.release_arm()
+
+
+def test_release_waits_for_sender_even_after_stop(stoppable_client, monkeypatch):
+    client, lock = stoppable_client
+    entered, unblock = Event(), Event()
+
+    def transport(self, observation):
+        entered.set()
+        assert unblock.wait(3)
+        return True
+
+    monkeypatch.setattr(type(client).__bases__[0], "send_observation", transport)
+    thread = Thread(target=client.send_observations)
+    client._workers = [thread]
+    client.control_loop_observation("Hold")
+    thread.start()
+    try:
+        assert entered.wait(2)
+        client.stop()
+        with pytest.raises(RuntimeError, match="workers"):
+            client.release_arm()
+        assert lock.held
+        client.robot.bus.disable_torque.assert_not_called()
+    finally:
+        unblock.set()
+        thread.join(2)
+    client.release_arm()
+    assert not lock.held
 
 
 def test_session_write_failure_stops_before_server_connection(

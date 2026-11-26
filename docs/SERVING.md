@@ -434,6 +434,96 @@ still refresh the selected policy server and validate the existing tunnel.
 
 ### Run page
 
+For robot-side timing diagnostics, start a new rollout with the updated worker,
+then run on the robot-connected machine from the repository root:
+
+```bash
+python3 -m robot.rollout_watch
+# Task-approach diagnosis: measured joints vs requested and actually sent targets
+python3 -m robot.rollout_watch --joints
+# Optional: --data-dir=/absolute/data/root or --trial-dir=/absolute/trial/path
+```
+
+This reads local status files only; Ctrl+C stops the reader, not the robot.
+It follows the most recently updated trial and prints a message if no files or
+timing samples exist. Old trials are not backfilled. The web's Execution logs
+do not contain this output. No policy-server restart is required for timing;
+each new rollout starts a fresh worker importing the current code.
+
+`status.json` has an additive `timing` object. Each stage reports total sample
+count and last/mean/max milliseconds over at most the latest 256 calls, using a
+monotonic clock. Only the existing monitor writes snapshots, at most 5 Hz;
+control/receive paths accumulate bounded samples without additional file I/O.
+`action_interval` measures gaps between successful action-call completions,
+excluding the initial wait. It measures commands, not physical motion.
+`action_lock_wait` and `observation_lock_wait` measure waits for the shared I/O
+lock. `action_total` and `observation_total` exclude that lock wait;
+`observation_enqueue` measures making an owned snapshot and replacing the pending
+observation, while `observation_send` measures native serialization/send work on
+the sender thread. Real workers also
+measure `observation_read`, `robot_send_action`, `serial_read`, `serial_write`,
+and `camera_read:<name>` (the camera's `read_latest` call, falling back to
+`async_read` on older implementations, not capture-thread FPS).
+Nested stage durations overlap: do not sum all means into a loop duration.
+Serial timings include calls made by observation/action and terminal hold.
+Instrumentation preserves I/O arguments, return values, exceptions and ordering;
+it adds measurement overhead and has not been validated on physical hardware.
+
+Observation transport runs on a third managed policy worker, separate from the
+native action/control loop and action receiver. Camera/joint acquisition still
+runs in the control loop under the existing I/O lock. `send_observation` now
+acknowledges local handoff, not completed transmission. It makes an owned copy
+of the native TimedObservation, retaining its timestamp, timestep and protocol
+type. There is at most one in-flight RPC and one pending snapshot; newer snapshots
+replace the pending one, preserving any pending `must_go` request. Snapshots
+waiting more than `RolloutGuardrails.max_pending_observation_age_seconds` (2 s)
+are dropped before sending, preserving their `must_go` for the next submission.
+This is a local queue-age bound, not a deadline for an already in-flight RPC.
+`status.json` also reports `observation_sender` pending/in-flight state and
+submitted/sent/replaced/stale counters; the watch command prints these.
+
+The control loop now uses monotonic absolute deadlines at the configured FPS,
+so ordinary OS wait overshoot does not accumulate into a slower cadence. Overrun
+deadlines are skipped rather than executing catch-up bursts. Waiting is
+interruptible by Stop. `control_tick_lateness` measures scheduling lateness and
+`control_deadlines_skipped` counts missed slots; neither establishes real-time
+or physical-motion guarantees. Native action execution, observation acquisition,
+queue threshold and action aggregation remain in use.
+
+After a chunk refills the action queue, the sender discards unsent observations
+from the previous request cycle. Capture carries a local generation token so
+an observation acquired across a refill cannot slip back into the pending slot.
+Only local pending work is invalidated: an already in-flight RPC is not cancelled
+and received policy actions are not dropped by this mechanism. A merge leaving
+the action queue empty retains pending work. The `superseded` counter reports
+these discarded/rejected observations; their native protocol objects and
+timestamps are unchanged. `observation_queue_wait` measures local handoff wait
+separately from `observation_send` and full observation-to-chunk latency.
+GPU inference and server-side waiting remain part of end-to-end latency.
+
+New real workers also expose bounded `joint_tracking` snapshots: normalized
+positions from existing Present_Position reads, the latest observation's joints,
+queued policy targets passed to send_action and the clamped targets it returns.
+The watcher `--joints` shows these instead of the detailed stage timing list.
+These hooks add no hardware reads/writes and never include image arrays. Separate
+measurement/action timestamps expose sample age; values are not simultaneous or
+Cartesian gripper coordinates. A missing send_action return is reported as unknown,
+never as confirmed transmission or physical arrival. `clamped_actions` counts
+successful calls whose returned targets differ from requested targets. Raw encoder
+reads with normalize=false are excluded. Use this to distinguish goal generation,
+clamping and joint tracking before diagnosing a failed task from timing alone.
+
+Stop closes the handoff and discards pending observations before closing the
+channel to cancel in-flight RPCs. The sender never acquires the robot I/O lock or
+opens hardware. All three workers participate in existing cleanup and liveness
+checks; Release refuses while any are alive, retaining ownership for retry.
+Transport failure aborts through the existing worker-error path. Synthetic
+blocked-transport tests cover continued action execution, bounded latest-state
+replacement, stale-state rejection, Stop/time-limit cancellation and Release
+refusal/retry. Physical smoothness and real GPU/SSH timing require a new rollout.
+An additional native LeRobot hold-transport test injects 200 ms send delays and
+checks continued action execution plus confirmed Stop/Release with fake hardware.
+
 Run & Evaluate keeps policy-server preparation separate from robot execution.
 `RolloutPanel` selects an existing ready server (and running tunnel for SSH), takes
 the instruction and explicit positive relative-target/time limits, and enables

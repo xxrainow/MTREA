@@ -35,6 +35,7 @@
 .checkpoint-table button { white-space: nowrap; }
 .checkpoint-final { color: var(--lab-accent); margin-left: 8px; font-size: 12px; }
 .checkpoint-intermediate { color: var(--lab-muted); }
+.checkpoint-training-curves { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--lab-border); }
 @media (max-width: 1100px) {
   .checkpoint-layout { grid-template-columns: 190px minmax(0, 1fr); gap: 16px; }
 }

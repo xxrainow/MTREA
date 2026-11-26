@@ -69,6 +69,7 @@ class RolloutGuardrails:
     # Hard ceiling on one rollout so a policy that never terminates can't run
     # the arm indefinitely.
     max_episode_seconds: int = 60
+    max_pending_observation_age_seconds: float = 2.0
 
 
 # --- Policy server endpoint ---

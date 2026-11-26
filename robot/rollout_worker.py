@@ -44,9 +44,11 @@ def create_real_client(config, lock, trial_dir):
 
     module.make_robot_from_config = make_calibrated_robot
     try:
-        return create_locked_client(config, lock=lock, client_type=module.RobotClient)
+        client = create_locked_client(config, lock=lock, client_type=module.RobotClient)
     finally:
         module.make_robot_from_config = original
+    client.instrument_robot_timing()
+    return client
 
 
 def run_process(config, *, trial_dir, time_limit_s, client_factory=create_real_client,

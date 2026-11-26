@@ -323,5 +323,69 @@ review; nobody pushes to main directly.
   logs, navigation/reload, command waiting and failed Release retry. These checks
   do not establish real hardware holding, GPU inference or SSH timing.
 
+- Robot rollout timing diagnostics now accumulate bounded monotonic-clock samples
+  in memory and expose them in status.json through the existing monitor. New real
+  workers time observation reads, each camera async_read, serial reads/writes,
+  robot action sends, observation sends, I/O-lock waits and action completion
+  intervals. Last/mean/max use at most 256 recent samples; counts are cumulative.
+  Nested stages overlap and must not be summed. Camera timing is caller wait,
+  not capture-thread FPS; action timing is command execution, not physical motion.
+  `python3 -m robot.rollout_watch` on the robot machine reads the latest trial
+  (or --trial-dir/--data-dir) and prints timings without hardware/network access.
+  It requires a new rollout with current code; old records are not rewritten.
+  Synthetic tests cover bounded timing, wrapped I/O errors/results, nested stage
+  snapshots and Stop/Release. Physical timing/overhead remain unverified.
+
+- Rollout observation transport now uses a third managed worker; the control
+  loop only acquires observations, publishes preview and hands off an owned
+  native-protocol snapshot. One RPC may be in flight and only the latest pending
+  observation is retained, preserving timestamp/timestep and pending must_go.
+  Pending snapshots older than the 2 s monotonic local queue-age guardrail are
+  dropped, retaining must_go for the next submission. No in-flight RPC deadline
+  is implied. Stop closes/discards the handoff and cancels the channel; all three
+  workers must stop before Release, with lock/torque retained on cleanup failure.
+  `observation_send` timing now runs on the sender; `observation_enqueue` and
+  observation_sender counters expose the handoff. Camera/joint acquisition remains
+  on the control thread under its existing I/O lock. Blocked-transport synthetic
+  tests cover continued actions, replacement/copy ownership, stale dropping,
+  Stop/time-limit cancellation, failure propagation and Release refusal/retry.
+  Actual hardware smoothness and GPU/SSH timing remain unverified.
+
+- Rollout control now follows monotonic absolute deadlines at configured FPS;
+  normal sleep overshoot is compensated on the next tick and missed deadlines
+  are skipped without catch-up bursts. Stop interrupts waits. Timing adds
+  control_tick_lateness, control_deadlines_skipped and observation_queue_wait.
+  A successful chunk merge that leaves actions queued invalidates prior-cycle
+  pending observations; local generation tokens also reject captures crossing
+  the refill. Existing in-flight RPCs are not cancelled and native received
+  actions/threshold/aggregation are preserved. observation_sender.superseded
+  counts invalidations. Camera timing uses read_latest where available, falling
+  back to async_read. Synthetic clock tests cover overshoot/overruns/Stop and
+  concurrent-refill tests cover stale captures; native hold integration includes
+  a 200 ms delayed send with hardware construction replaced. Physical cadence,
+  task success and GPU/SSH latency still require real rollout measurements.
+
+- Task-approach diagnosis uses `python3 -m robot.rollout_watch --joints` and new
+  joint_tracking status snapshots. Hooks retain normalized positions from existing
+  serial/observation reads and requested vs returned (clamped) action targets with
+  separate timestamps, adding no hardware I/O. No-return targets remain unknown;
+  raw encoder reads are excluded. These are joint values, not Cartesian position
+  or proof of physical arrival. A 30 Hz command cadence does not establish task
+  success. Visual inspection of pick_and_place training videos confirmed the
+  historical names are unconventional: wrist is the external overview and scene
+  is the gripper-mounted close view. Current preview has the same assignment;
+  never swap them based only on their names. The blue-block/blackbox instruction
+  has 10 demos (episodes 30–39). The 2026-11-16 20:40 rollout recorded "blaxbox"
+  instead of training's "blackbox."; use the exact task text for diagnosis, but
+  this typo alone has not been established as the reason for failed approach.
+
+- Checkpoint shows the last complete saved step and all three training curves
+  (loss, learning rate, gradient norm) in both the run list view and checkpoint
+  detail. Curves read the selected run's full metrics.jsonl history from offset
+  zero, without the live monitor's point limit; they are run-level history even
+  when viewing a kept checkpoint. Refresh reloads them; missing metrics and read
+  errors are shown separately from checkpoint metadata. Train and Checkpoint
+  share the same curve components, including explicit Fake labels.
+
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.
