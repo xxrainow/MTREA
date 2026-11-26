@@ -1,19 +1,16 @@
 .rollout-results-page, .rollout-results-page * { box-sizing: border-box; }
 .results-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-.results-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 20px; align-items: start; }
 .results-content, .result-attempt-detail { display: grid; gap: 20px; min-width: 0; }
-.results-instructions { padding: 18px; }
 .results-instruction-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.results-folder-list { display: grid; gap: 8px; max-height: 65vh; overflow-y: auto; }
-.results-folder, .results-run { padding: 14px; border: 1px solid var(--lab-border); border-radius: 5px; background: var(--lab-background); color: var(--lab-text); text-align: left; font: inherit; overflow-wrap: anywhere; cursor: pointer; }
-.results-folder[aria-pressed='true'], .results-attempt-table .is-selected { background: var(--lab-active); }
-.results-folder[aria-pressed='true'] { border-color: var(--lab-accent); }
-.results-folder > span { display: block; font-size: 14px; white-space: pre-wrap; line-height: 1.6; }
-.results-folder small, .results-run small { display: block; margin-top: 8px; font-size: 12px; color: var(--lab-muted); }
-.results-folder:disabled, .results-run:disabled { opacity: .6; cursor: not-allowed; }
-.results-run-list { display: grid; gap: 12px; }
-.results-run > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
-.results-run p { margin: 12px 0 0; font-size: 13px; }
+.results-search { max-width: 600px; }
+.results-rollout-table { width: 100%; min-width: 900px; border-collapse: collapse; text-align: left; font-size: 13px; }
+.results-rollout-table th { font-weight: 500; color: var(--lab-muted); }
+.results-rollout-table th, .results-rollout-table td { padding: 14px 12px; border-bottom: 1px solid var(--lab-border); vertical-align: top; overflow-wrap: anywhere; }
+.results-rollout-table th:first-child { width: 180px; }
+.results-rollout-table td:nth-child(2), .results-rollout-table td:nth-child(3) { max-width: 280px; }
+.results-rollout-table small { display: block; margin-top: 8px; color: var(--lab-muted); font-size: 11px; }
+.results-rollout-table .results-count, .results-rollout-table .run-status { white-space: nowrap; }
+.results-rollout-table tbody tr:hover { background: var(--lab-active); }
 .results-run-heading { margin-top: 24px; }
 .results-run-heading h3 { margin: 0; font-size: 16px; }
 .results-table-wrapper { overflow-x: auto; }
@@ -27,9 +24,6 @@
 .result-attempt-detail .rollout-outcome { margin-top: 0; }
 .result-attempt-detail .run-number-fields { margin-top: 16px; }
 .result-metrics dd { max-width: 100%; }
-@media (max-width: 1100px) { .results-layout { grid-template-columns: 230px minmax(0, 1fr); } }
 @media (max-width: 800px) {
-  .results-layout { grid-template-columns: 1fr; }
-  .results-folder-list { max-height: 260px; }
   .results-attempt-table { min-width: 550px; }
 }

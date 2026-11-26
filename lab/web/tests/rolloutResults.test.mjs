@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../src/rollouts/results.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023 } });
-const { groupRolloutResults, outcomeCounts, resultTargetSelection, formatElapsed } =
+const { listRolloutResults, outcomeCounts, resultTargetSelection, formatElapsed } =
   await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
 
 function trial(id, instruction = 'Put the block in the box.', metadata = {}) {
@@ -20,15 +20,16 @@ function validation(id, { instruction = 'Put the block in the box.', checkpoint 
     server_mode: mode, created_at: created, target_count: 10 }, attempts };
 }
 
-test('exact instructions group runs while checkpoints and hold mode remain separate', () => {
-  const a = validation('a');
-  const b = validation('b', { checkpoint: 'policy/expert', mode: 'hold' });
-  const groups = groupRolloutResults([a, b, validation('c', { instruction: 'Put the block in the box' })], []);
-  assert.equal(groups.length, 2);
-  const same = groups.find(group => group.instruction.endsWith('.'));
-  assert.equal(same.runs.length, 2);
-  assert.deepEqual(new Set(same.runs.map(run => run.checkpoint)), new Set(['policy/h0', 'policy/expert']));
-  assert.deepEqual(new Set(same.runs.map(run => run.mode)), new Set(['real', 'hold']));
+test('each rollout is a separate entry even when instructions match', () => {
+  const runs = listRolloutResults([
+    validation('a'), validation('b', { checkpoint: 'policy/expert', mode: 'hold' }),
+    validation('c', { instruction: 'Put the block in the box' }),
+  ], []);
+  assert.equal(runs.length, 3);
+  assert.deepEqual(new Set(runs.map(run => run.id)), new Set(['a', 'b', 'c']));
+  assert.equal(runs.filter(run => run.instruction.endsWith('.')).length, 2);
+  assert.deepEqual(new Set(runs.map(run => run.checkpoint)), new Set(['policy/h0', 'policy/expert']));
+  assert.deepEqual(new Set(runs.map(run => run.mode)), new Set(['real', 'hold']));
 });
 
 test('linked trials are not duplicated and missing validation records stay visible read-only', () => {
@@ -36,20 +37,19 @@ test('linked trials are not duplicated and missing validation records stay visib
   const orphan = trial('orphan', undefined, { validation: { id: 'missing' } });
   const legacy = trial('legacy');
   const grouped = validation('a', { attempts: [{ number: 1, rollout: linked, outcome: 'unjudged', notes: '' }] });
-  const groups = groupRolloutResults([grouped], [linked, orphan, legacy]);
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].runs.length, 3);
-  assert.equal(groups[0].runs.find(run => run.id === 'orphan').kind, 'unlinked');
-  assert.equal(groups[0].runs.find(run => run.id === 'legacy').kind, 'standalone');
-  assert.equal(groups[0].runs.filter(run => run.key === 'standalone:linked').length, 0);
+  const runs = listRolloutResults([grouped], [linked, orphan, legacy]);
+  assert.equal(runs.length, 3);
+  assert.equal(runs.find(run => run.id === 'orphan').kind, 'unlinked');
+  assert.equal(runs.find(run => run.id === 'legacy').kind, 'standalone');
+  assert.equal(runs.filter(run => run.key === 'standalone:linked').length, 0);
 });
 
 test('runs sort by actual time across recorded UTC offsets', () => {
-  const groups = groupRolloutResults([
+  const runs = listRolloutResults([
     validation('older', { created: '2026-11-26T09:00:00+09:00' }),
     validation('newer', { created: '2026-11-26T01:00:00Z' }),
   ], []);
-  assert.deepEqual(groups[0].runs.map(run => run.id), ['newer', 'older']);
+  assert.deepEqual(runs.map(run => run.id), ['newer', 'older']);
 });
 
 test('outcomes use explicit annotations and never infer failure from execution errors', () => {
@@ -67,4 +67,22 @@ test('result links retain validation and attempt identity; absent legacy metrics
   assert.equal(formatElapsed(undefined), '—');
   assert.equal(formatElapsed(null), '—');
   assert.equal(formatElapsed(1.25), '1.3 s');
+});
+
+test('multi-attempt validations stay together and every legacy rollout is one attempt', () => {
+  const first = trial('first', undefined, { validation: { id: 'multi' } });
+  const second = trial('second', undefined, { validation: { id: 'multi' } });
+  const attempts = [first, second].map((rollout, index) => ({ number: index + 1, rollout, outcome: 'unjudged', notes: '' }));
+  const runs = listRolloutResults([validation('multi', { attempts })], [first, second, trial('old-a'), trial('old-b')]);
+  assert.equal(runs.length, 3);
+  const multi = runs.find(run => run.id === 'multi');
+  assert.equal(multi.targetCount, 10);
+  assert.deepEqual(multi.attempts.map(item => item.rollout.job.id), ['first', 'second']);
+  for (const id of ['old-a', 'old-b']) {
+    const old = runs.find(run => run.id === id);
+    assert.equal(old.targetCount, 1);
+    assert.equal(old.attempts.length, 1);
+    assert.equal(old.attempts[0].number, 1);
+    assert.equal(old.attempts[0].rollout.job.id, id);
+  }
 });

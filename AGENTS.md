@@ -451,8 +451,13 @@ review; nobody pushes to main directly.
   grouped result browsing remains the next stage.
 
 - Run & Evaluate redesign stage 4 adds a separate Rollout results sidebar page.
-  Saved exact instruction text groups validation runs, retaining separate policy,
-  date, mode, limits and target/started/released/judged counts per run. A run opens
+  Results now list one entry per rollout execution, newest first, like Datasets;
+  instruction text is searchable metadata, not a folder/grouping key. A repeated
+  validation keeps all its attempts inside one entry. Each historical standalone
+  rollout is displayed as a separate one-attempt run (1/1), without rewriting or
+  migrating its files. The list shows instruction, checkpoint, recorded/requested
+  counts and status, retaining separate policy, date, mode, limits and
+  target/started/released/judged counts per run. A run opens
   an attempt table with metrics, end reasons/errors, local logs, configuration and
   provenance. Outcomes/notes reuse the existing append-only annotation API; edits
   require save/discard before record or sidebar navigation, and selection survives
@@ -465,14 +470,17 @@ review; nobody pushes to main directly.
   results in the released execution workspace closes the native dialog before
   navigating to that validation/attempt; live ownership/pending commands/unsaved
   edits block this action. Results can return to Run & Evaluate without starting
-  execution. Instruction folders are a UI grouping, not filesystem moves or
+  execution. Run listing is a display normalization, not filesystem moves or
   research-role assignments. The current rollout recorder stores no playback
   video; temporary JPEG preview frames are not shown as archived recordings.
-  Build/lint, result-grouping/identity/count tests and existing API regressions
-  pass. Isolated real-API synthetic-record browser checks cover instruction/run/
+  Build/lint, result-identity/count tests and existing API regressions
+  pass. Isolated real-API synthetic-record browser checks cover run/
   attempt navigation, partial/failed/legacy records, annotation persistence,
   unsaved guards, search, logs and workspace-to-result handoff. No physical robot,
   GPU or SSH execution was performed for this page.
+  The rollout-based revision additionally verifies that matching instructions
+  remain separate runs, repeated attempts are not split into duplicate entries,
+  legacy runs contain one attempt each and selection survives reload.
 
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.
