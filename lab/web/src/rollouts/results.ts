@@ -7,15 +7,14 @@ export type ResultRun = {
   createdAt: string; checkpoint: string; mode: string; state: string;
   targetCount: number; attempts: ValidationAttempt[]; validation?: RolloutValidation;
 };
-export type InstructionResults = { instruction: string; runs: ResultRun[] };
-export type ResultSelection = { instruction?: string; runKey?: string; jobId?: string };
+export type ResultSelection = { runKey?: string; jobId?: string };
 
 export function resultTargetSelection(target: RolloutResultTarget): ResultSelection {
   if (!target.validationId && !target.jobId) return {};
   return { runKey: target.validationId ? `validation:${target.validationId}` : `standalone:${target.jobId}`, jobId: target.jobId };
 }
 
-export function groupRolloutResults(validations: RolloutValidation[], trials: RolloutSnapshot[]): InstructionResults[] {
+export function listRolloutResults(validations: RolloutValidation[], trials: RolloutSnapshot[]): ResultRun[] {
   const linked = new Set(validations.flatMap(item => item.attempts.map(attempt => attempt.rollout.job.id)));
   const runs: ResultRun[] = validations.map(item => ({
     key: `validation:${item.id}`, id: item.id, kind: 'validation',
@@ -36,13 +35,7 @@ export function groupRolloutResults(validations: RolloutValidation[], trials: Ro
   }
   runs.sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0)
     || a.key.localeCompare(b.key));
-  const groups = new Map<string, InstructionResults>();
-  for (const run of runs) {
-    const group = groups.get(run.instruction) ?? { instruction: run.instruction, runs: [] };
-    group.runs.push(run);
-    groups.set(run.instruction, group);
-  }
-  return [...groups.values()];
+  return runs;
 }
 
 export function outcomeCounts(attempts: ValidationAttempt[]) {
