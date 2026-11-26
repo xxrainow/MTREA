@@ -7,6 +7,7 @@ import RolloutCamera from './RolloutCamera';
 import ValidationAttemptReview from './ValidationAttemptReview';
 import NextValidationAttempt from './NextValidationAttempt';
 import { validationStateLabels } from '../api/rolloutValidations';
+import type { RolloutResultTarget } from '../rollouts/results';
 import './RolloutWorkspace.css';
 
 type Props = {
@@ -15,9 +16,10 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onKeepOpen: () => void;
+  onOpenResults: (target: RolloutResultTarget) => void;
 };
 
-export default function RolloutWorkspace({ rollout, validations, open, onClose, onKeepOpen }: Props) {
+export default function RolloutWorkspace({ rollout, validations, open, onClose, onKeepOpen, onOpenResults }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [logs, setLogs] = useState({ id: '', content: '', error: '' });
   const [dirtyReview, setDirtyReview] = useState({ id: '', dirty: false });
@@ -95,6 +97,11 @@ export default function RolloutWorkspace({ rollout, validations, open, onClose, 
         {validation && <p className="rollout-round">Attempt {attempt?.number} / {validation.session.target_count} · {validationStateLabels[validation.state]}</p>}
       </div>
       <span className="run-status" role="status">{selected?.state ?? 'Waiting for rollout'}</span>
+      <button type="button" className="run-button" disabled={!canClose || !id} onClick={() => {
+        if (!canClose || !id) return;
+        close();
+        onOpenResults({ validationId: validation?.id, jobId: id });
+      }}>View results</button>
       <button type="button" className="run-button" disabled={!canClose} onClick={close}>Close workspace</button>
     </header>
     <div className="rollout-workspace-body">

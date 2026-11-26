@@ -450,5 +450,29 @@ review; nobody pushes to main directly.
   is skipped when LeRobot is unavailable. No physical hardware or GPU was opened;
   grouped result browsing remains the next stage.
 
+- Run & Evaluate redesign stage 4 adds a separate Rollout results sidebar page.
+  Saved exact instruction text groups validation runs, retaining separate policy,
+  date, mode, limits and target/started/released/judged counts per run. A run opens
+  an attempt table with metrics, end reasons/errors, local logs, configuration and
+  provenance. Outcomes/notes reuse the existing append-only annotation API; edits
+  require save/discard before record or sidebar navigation, and selection survives
+  navigation/reload. Counts never infer failure from execution errors or merge
+  success statistics across policies/modes. Legacy standalone and unlinked saved
+  attempts are visible read-only and are not converted into validation records;
+  linked trials are not duplicated. Timestamp ordering respects recorded offsets.
+  Results polling only uses existing local rollout/validation reads, never SSH or
+  hardware. Failed reads retain the last loaded records and disable edits. View
+  results in the released execution workspace closes the native dialog before
+  navigating to that validation/attempt; live ownership/pending commands/unsaved
+  edits block this action. Results can return to Run & Evaluate without starting
+  execution. Instruction folders are a UI grouping, not filesystem moves or
+  research-role assignments. The current rollout recorder stores no playback
+  video; temporary JPEG preview frames are not shown as archived recordings.
+  Build/lint, result-grouping/identity/count tests and existing API regressions
+  pass. Isolated real-API synthetic-record browser checks cover instruction/run/
+  attempt navigation, partial/failed/legacy records, annotation persistence,
+  unsaved guards, search, logs and workspace-to-result handoff. No physical robot,
+  GPU or SSH execution was performed for this page.
+
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.

@@ -10,6 +10,8 @@ import DatasetsPage from './pages/DatasetsPage';
 import TrainPage from './pages/TrainPage';
 import RunPage from './pages/RunPage';
 import CheckpointPage from './pages/CheckpointPage';
+import RolloutResultsPage from './pages/RolloutResultsPage';
+import type { RolloutResultTarget } from './rollouts/results';
 import { initialForm } from './training/model';
 import type { TrainingForm } from './training/model';
 import type { DatasetReference } from './api/datasets';
@@ -24,6 +26,8 @@ function App() {
   const [trainJobId, setTrainJobId] = useState<string | null>(null);
   const [checkpointToOpen, setCheckpointToOpen] = useState<string | null>(null);
   const [jobToOpen, setJobToOpen] = useState<string | null>(null);
+  const [resultsToOpen, setResultsToOpen] = useState<RolloutResultTarget | null>(null);
+  const [resultsEditing, setResultsEditing] = useState(false);
 
   function openCheckpoint(id: string | null) {
     setCheckpointToOpen(id);
@@ -31,6 +35,10 @@ function App() {
   }
 
   function navigate(page: PageName) {
+    if (activePage === 'Rollout results' && resultsEditing) {
+      window.alert('Save or discard outcome edits before leaving this page.');
+      return;
+    }
     if (activePage === 'Collect' && page !== 'Collect' && collectBusy) {
       window.alert('Recording is active. Stop recording and wait for saving to finish before leaving.');
       return;
@@ -39,7 +47,21 @@ function App() {
     setCheckpointToOpen(null);
     setDatasetToOpen(null);
     setJobToOpen(null);
+    setResultsToOpen(null);
     setActivePage(page);
+  }
+
+  function openResults(target: RolloutResultTarget) {
+    setResultsToOpen(target);
+    setActivePage('Rollout results');
+  }
+
+  function openExecution(target: RolloutResultTarget) {
+    if (resultsEditing) return;
+    if (target.jobId) sessionStorage.setItem('lab.rollout.selected', target.jobId);
+    if (target.validationId) sessionStorage.setItem('lab.rollout.validation', target.validationId);
+    sessionStorage.setItem('lab.run.tab', 'rollout');
+    setActivePage('Run & Evaluate');
   }
 
   function openJob(jobId: string) {
@@ -80,7 +102,9 @@ function App() {
       ) : activePage === 'Checkpoint' ? (
         <CheckpointPage selectedId={checkpointToOpen} onSelect={setCheckpointToOpen} />
       ) : activePage === 'Run & Evaluate' ? (
-        <RunPage />
+        <RunPage onOpenResults={openResults} />
+      ) : activePage === 'Rollout results' ? (
+        <RolloutResultsPage initialTarget={resultsToOpen} onEditingChange={setResultsEditing} onOpenExecution={openExecution} />
       ) : activePage === 'Jobs' ? (
         <JobsPage key={jobToOpen ?? 'all'} initialJobId={jobToOpen} />
       ) : (
