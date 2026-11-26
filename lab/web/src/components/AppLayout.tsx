@@ -11,6 +11,7 @@ const menuItems = [
   'Train',
   'Checkpoint',
   'Run & Evaluate',
+  'Rollout results',
   'Jobs',
 ] as const;
 

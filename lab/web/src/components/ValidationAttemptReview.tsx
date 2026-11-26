@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import type { Outcome, RolloutValidation, ValidationAttempt } from '../api/rolloutValidations';
-import type { useRolloutValidations } from '../hooks/useRolloutValidations';
 
 export default function ValidationAttemptReview({ validation, attempt, validations, blocked, onDirtyChange }: {
   validation: RolloutValidation; attempt: ValidationAttempt;
-  validations: ReturnType<typeof useRolloutValidations>; blocked: boolean;
+  validations: {
+    busy: boolean;
+    annotate: (id: string, jobId: string, outcome: Outcome, notes: string) => Promise<boolean>;
+  };
+  blocked: boolean;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const [outcome, setOutcome] = useState<Outcome>(attempt.outcome);

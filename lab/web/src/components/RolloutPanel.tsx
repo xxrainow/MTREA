@@ -5,8 +5,9 @@ import type { useRolloutValidations } from '../hooks/useRolloutValidations';
 import type { PolicySession } from '../api/serving';
 import { policySessionReady } from '../api/serving';
 import type { useRollouts } from '../hooks/useRollouts';
+import type { RolloutResultTarget } from '../rollouts/results';
 
-export default function RolloutPanel({ sessions, sessionError, rollout, validations, serverId, onServerChange, onPrepareServer, onOpenWorkspace }: {
+export default function RolloutPanel({ sessions, sessionError, rollout, validations, serverId, onServerChange, onPrepareServer, onOpenWorkspace, onOpenResults }: {
   sessions: PolicySession[] | null;
   sessionError: string;
   rollout: ReturnType<typeof useRollouts>;
@@ -15,6 +16,7 @@ export default function RolloutPanel({ sessions, sessionError, rollout, validati
   onServerChange: (id: string) => void;
   onPrepareServer: () => void;
   onOpenWorkspace: () => void;
+  onOpenResults: (target: RolloutResultTarget) => void;
 }) {
   const [instruction, setInstruction] = useState('');
   const [targetLimit, setTargetLimit] = useState('');
@@ -132,6 +134,8 @@ export default function RolloutPanel({ sessions, sessionError, rollout, validati
       <div className="run-actions">
         <button type="button" className="run-button" disabled={validations.busy || !validations.selected.attempts.length}
           onClick={() => { validations.select(validations.selected!.id); onOpenWorkspace(); }}>Open validation workspace</button>
+        <button type="button" className="run-button" disabled={Boolean(rollout.owner) || rollout.busy || validations.busy}
+          onClick={() => onOpenResults({ validationId: validations.selected!.id })}>View results</button>
         {active && <button type="button" className="run-button" disabled={Boolean(rollout.owner) || rollout.busy || validations.busy || Boolean(validations.pollError)}
           onClick={() => void validations.end(active)}>End validation</button>}
       </div>
