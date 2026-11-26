@@ -2,16 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { errorMessage } from '../api/hardware';
 import { loadRollouts } from '../api/rollouts';
 import type { RolloutSnapshot } from '../api/rollouts';
-import { loadValidations, saveValidationOutcome } from '../api/rolloutValidations';
-import type { Outcome, RolloutValidation } from '../api/rolloutValidations';
+import { changeResultArchive, loadMergedResults, loadResultArchive, loadValidations, saveValidationOutcome } from '../api/rolloutValidations';
+import type { ArchivedResult, MergedResult, Outcome, RolloutValidation } from '../api/rolloutValidations';
 
-type Snapshot = { validations: RolloutValidation[]; trials: RolloutSnapshot[] };
+type Snapshot = { validations: RolloutValidation[]; trials: RolloutSnapshot[]; archived: ArchivedResult[]; merged: MergedResult[] };
 
 export function useRolloutResults() {
   const [data, setData] = useState<Snapshot | null>(null);
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState<{ jobId: string; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const version = useRef(0);
   const writing = useRef(false);
@@ -22,9 +24,11 @@ export function useRolloutResults() {
     async function poll() {
       const requested = version.current;
       try {
-        const [validations, trials] = await Promise.all([loadValidations(controller.signal), loadRollouts(controller.signal)]);
+        const [validations, trials, archive, merged] = await Promise.all([
+          loadValidations(controller.signal), loadRollouts(controller.signal), loadResultArchive(controller.signal), loadMergedResults(controller.signal),
+        ]);
         if (!controller.signal.aborted && requested === version.current && !writing.current) {
-          setData({ validations, trials });
+          setData({ validations, trials, archived: archive.archived, merged });
           setError('');
         }
       } catch (reason) {
@@ -58,5 +62,25 @@ export function useRolloutResults() {
     }
   }
 
-  return { data, error, saveError, saving, annotate, refreshKey, refresh: () => setRefreshKey(key => key + 1) };
+  async function archive(result: ArchivedResult, restore = false) {
+    if (writing.current || error) return false;
+    writing.current = true;
+    version.current += 1;
+    setArchiving(true);
+    setArchiveError('');
+    try {
+      const updated = await changeResultArchive(result, restore);
+      setData(previous => previous ? { ...previous, archived: updated.archived } : previous);
+      return true;
+    } catch (reason) {
+      setArchiveError(`${result.id}: ${errorMessage(reason)}`);
+      return false;
+    } finally {
+      writing.current = false;
+      version.current += 1;
+      setArchiving(false);
+    }
+  }
+
+  return { data, error, saveError, saving, archiving, archiveError, archive, annotate, refreshKey, refresh: () => setRefreshKey(key => key + 1) };
 }

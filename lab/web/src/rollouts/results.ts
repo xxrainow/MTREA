@@ -1,11 +1,11 @@
 import type { RolloutSnapshot } from '../api/rollouts';
-import type { RolloutValidation, ValidationAttempt } from '../api/rolloutValidations';
+import type { MergedResult, RolloutValidation, ValidationAttempt } from '../api/rolloutValidations';
 
 export type RolloutResultTarget = { validationId?: string; jobId?: string };
 export type ResultRun = {
-  key: string; id: string; kind: 'validation' | 'standalone' | 'unlinked'; instruction: string;
+  key: string; id: string; kind: 'validation' | 'standalone' | 'unlinked' | 'merged'; instruction: string;
   createdAt: string; checkpoint: string; mode: string; state: string;
-  targetCount: number; attempts: ValidationAttempt[]; validation?: RolloutValidation;
+  targetCount: number; attempts: ValidationAttempt[]; validation?: RolloutValidation; merged?: MergedResult; name?: string;
 };
 export type ResultSelection = { runKey?: string; jobId?: string };
 
@@ -14,7 +14,7 @@ export function resultTargetSelection(target: RolloutResultTarget): ResultSelect
   return { runKey: target.validationId ? `validation:${target.validationId}` : `standalone:${target.jobId}`, jobId: target.jobId };
 }
 
-export function listRolloutResults(validations: RolloutValidation[], trials: RolloutSnapshot[]): ResultRun[] {
+export function listRolloutResults(validations: RolloutValidation[], trials: RolloutSnapshot[], merged: MergedResult[] = []): ResultRun[] {
   const linked = new Set(validations.flatMap(item => item.attempts.map(attempt => attempt.rollout.job.id)));
   const runs: ResultRun[] = validations.map(item => ({
     key: `validation:${item.id}`, id: item.id, kind: 'validation',
@@ -33,6 +33,11 @@ export function listRolloutResults(validations: RolloutValidation[], trials: Rol
       attempts: [{ number: 1, rollout: trial, outcome: 'unjudged', notes: '' }],
     });
   }
+  for (const item of merged) runs.push({
+    key: `merged:${item.id}`, id: item.id, kind: 'merged', name: item.name,
+    instruction: item.condition.instruction, checkpoint: item.condition.checkpoint, mode: item.condition.mode,
+    createdAt: item.created_at, state: 'Merged', targetCount: item.target_count, attempts: item.attempts, merged: item,
+  });
   runs.sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0)
     || a.key.localeCompare(b.key));
   return runs;

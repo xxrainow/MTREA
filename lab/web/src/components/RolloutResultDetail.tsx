@@ -35,10 +35,11 @@ function ResultLogs({ trial, refreshKey }: { trial: RolloutSnapshot; refreshKey:
   </details>;
 }
 
-export default function RolloutResultDetail({ run, attempt, results, navigationBlocked, onDirtyChange, onOpenExecution }: {
+export default function RolloutResultDetail({ run, attempt, results, navigationBlocked, readOnly = false, onDirtyChange, onOpenExecution }: {
   run: ResultRun; attempt: ValidationAttempt; results: ReturnType<typeof useRolloutResults>;
   onDirtyChange: (dirty: boolean) => void; onOpenExecution: () => void;
   navigationBlocked: boolean;
+  readOnly?: boolean;
 }) {
   const trial = attempt.rollout;
   const status = trial.status;
@@ -69,9 +70,10 @@ export default function RolloutResultDetail({ run, attempt, results, navigationB
       <div className="run-actions"><button type="button" className="run-button" disabled={navigationBlocked} onClick={onOpenExecution}>Open Run & Evaluate</button></div>
     </section>
     {run.validation ? <ValidationAttemptReview validation={run.validation} attempt={attempt}
-      validations={{ busy: results.saving, annotate: results.annotate }} blocked={results.saving || Boolean(results.error)}
+      validations={{ busy: results.saving || results.archiving, annotate: results.annotate }} blocked={readOnly || results.saving || results.archiving || Boolean(results.error)}
       onDirtyChange={onDirtyChange} />
-      : <p className="run-note">{run.kind === 'unlinked' ? 'The validation record is unavailable. This saved attempt is read-only.' : 'This historical single rollout is read-only. No validation outcome record is available.'}</p>}
+      : <p className="run-note">{run.merged ? `Merged outcomes and notes are a saved snapshot. Source: ${attempt.rollout.job.id}. Update the original validation to record a new judgment.` : run.kind === 'unlinked' ? 'The validation record is unavailable. This saved attempt is read-only.' : 'This historical single rollout is read-only. No validation outcome record is available.'}</p>}
+    {run.merged && <dl className="run-details run-panel"><div><dt>Saved outcome</dt><dd>{attempt.outcome}</dd></div><div><dt>Saved notes</dt><dd>{attempt.notes || '—'}</dd></div></dl>}
     {results.saveError?.jobId === trial.job.id && <p role="alert">Cannot save outcome: {results.saveError.message}</p>}
     <ResultLogs key={trial.job.id} trial={trial} refreshKey={results.refreshKey} />
     <details className="run-panel"><summary>Trial configuration and provenance</summary>

@@ -86,3 +86,17 @@ test('multi-attempt validations stay together and every legacy rollout is one at
     assert.equal(old.attempts[0].rollout.job.id, id);
   }
 });
+
+test('merged bundles retain all attempts and leave their sources visible', () => {
+  const legacy = trial('legacy');
+  const attempt = { number: 1, rollout: legacy, outcome: 'unjudged', notes: '' };
+  const merged = { id: 'merged', name: 'Combined report', created_at: '2026-11-26T12:00:00Z',
+    condition: { instruction: 'Put the block in the box.', checkpoint: 'policy/legacy', mode: 'real' },
+    target_count: 2, attempts: [attempt, { ...attempt, number: 2, rollout: trial('other') }] };
+  const runs = listRolloutResults([], [legacy], [merged]);
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].kind, 'merged');
+  assert.equal(runs[0].name, 'Combined report');
+  assert.equal(runs[0].attempts.length, 2);
+  assert.equal(runs[1].id, 'legacy');
+});

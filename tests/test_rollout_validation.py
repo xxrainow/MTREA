@@ -246,3 +246,134 @@ def test_reads_do_not_recheck_server_and_standalone_start_cannot_bypass_validati
     body = {key: val for key, val in settings().items() if key != 'target_count'}
     assert client.post('/api/rollouts/start', json=body).status_code == 409
     client.app.state.runner.executors[Executor.LOCAL].start.assert_called_once()
+
+
+def test_result_archive_is_reversible_and_preserves_all_source_records(client):
+    value, _ = start(client, target_count=1)
+    job = trial_status(client, value, released=True)
+    validation_dir = client.app.state.rollout_validation.directory(value['id'])
+    trial_dir = Path(job.spec.run_dir)
+    before = {path: path.read_bytes() for root in (validation_dir, trial_dir) for path in root.rglob('*') if path.is_file()}
+    body = {'kind': 'validation', 'id': value['id']}
+    response = client.post('/api/rollout-results/archive', json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()['archived'] == [body]
+    archive = client.app.state.rollout_result_archive
+    archived_bytes = archive.path.read_bytes()
+    assert client.post('/api/rollout-results/archive', json=body).status_code == 200
+    assert archive.path.read_bytes() == archived_bytes
+    assert read(client, value)['started_count'] == 1
+    assert any(item['job']['id'] == job.id for item in client.get('/api/rollouts').json())
+    from lab.core.rollout_result_archive import RolloutResultArchive
+    client.app.state.rollout_result_archive = RolloutResultArchive(client.app.state.rollout_validation)
+    assert client.get('/api/rollout-results/archive').json()['archived'] == [body]
+    response = client.post('/api/rollout-results/restore', json=body)
+    assert response.status_code == 200 and response.json()['archived'] == []
+    assert archive.path.read_bytes().startswith(archived_bytes)
+    assert all(path.read_bytes() == content for path, content in before.items())
+    client.app.state.runner.executors[Executor.LOCAL].stop.assert_not_called()
+
+
+def test_result_archive_refuses_active_or_unfinished_validation_and_individual_linked_trials(client):
+    value, _ = start(client)
+    body = {'kind': 'validation', 'id': value['id']}
+    assert client.post('/api/rollout-results/archive', json=body).status_code == 409
+    trial_status(client, value, alive=True, running_job=False)
+    assert client.post('/api/rollout-results/archive', json=body).status_code == 409
+    job = trial_status(client, value, released=True)
+    assert client.post('/api/rollout-results/archive', json=body).status_code == 409
+    assert client.post('/api/rollout-results/archive', json={'kind': 'standalone', 'id': job.id}).status_code == 409
+    assert client.post(f"/api/rollout-validations/{value['id']}/end").status_code == 200
+    assert client.post('/api/rollout-results/archive', json=body).status_code == 200
+    assert not (Path(job.spec.run_dir) / 'commands').exists()
+    client.app.state.runner.executors[Executor.LOCAL].stop.assert_not_called()
+
+
+def test_legacy_result_archive_and_restore_do_not_convert_or_delete_trial(client):
+    root = client.app.state.rollout.root / 'legacy-result'
+    job = Job(id='legacy-result', spec=JobSpec(kind=JobKind.ROLLOUT, cmd='never run', run_dir=str(root)), status=JobStatus.DONE)
+    client.app.state.runner.store.save(job)
+    write(root / 'status.json', {'state': 'stopped', 'process_alive': False, 'arm_released': True, 'elapsed_s': 1})
+    write(root / 'session.json', {'task': 'Historical instruction', 'checkpoint': 'historical policy'})
+    before = {path: path.read_bytes() for path in root.iterdir()}
+    body = {'kind': 'standalone', 'id': job.id}
+    assert client.post('/api/rollout-results/archive', json=body).status_code == 200
+    assert client.get('/api/rollout-results/archive').json()['archived'] == [body]
+    assert client.post('/api/rollout-results/restore', json=body).status_code == 200
+    assert not client.app.state.rollout_validation.root.exists()
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_result_archive_rejects_invalid_requests_and_torn_appends(client):
+    assert client.post('/api/rollout-results/archive', json={'kind': 'standalone', 'id': 'missing'}).status_code == 404
+    assert client.post('/api/rollout-results/archive', json={'kind': 'wrong', 'id': 'missing'}).status_code == 422
+    assert client.post('/api/rollout-results/archive', json={'kind': 'validation', 'id': '../outside'}).status_code == 400
+    value, _ = start(client, target_count=1)
+    trial_status(client, value, released=True)
+    body = {'kind': 'validation', 'id': value['id']}
+    assert client.post('/api/rollout-results/archive', json=body).status_code == 200
+    path = client.app.state.rollout_result_archive.path
+    with path.open('ab') as stream:
+        stream.write(b'{"action":')
+    original = path.read_bytes()
+    assert client.post('/api/rollout-results/restore', json=body).status_code == 400
+    assert path.read_bytes() == original
+
+
+def finished_validation(client, **changes):
+    value, _ = start(client, target_count=1, **changes)
+    trial_status(client, value, released=True)
+    return read(client, value)
+
+
+def merge_body(*values):
+    return {'sources': [{'kind': 'validation', 'id': value['id']} for value in values],
+            'name': 'Combined validation', 'request_id': uuid4().hex}
+
+
+def test_result_merge_preserves_sources_and_recovers_with_archive(client):
+    first = finished_validation(client)
+    second = finished_validation(client)
+    service = client.app.state.rollout_validation
+    source_files = {path: path.read_bytes() for value in (first, second)
+                    for path in service.directory(value['id']).iterdir() if path.is_file()}
+    job_id = first['attempts'][0]['rollout']['job']['id']
+    client.post(f"/api/rollout-validations/{first['id']}/outcome",
+                json={'job_id': job_id, 'outcome': 'success', 'notes': 'Saved judgment'})
+    source_files = {path: path.read_bytes() for path in source_files}
+    body = merge_body(first, second)
+    result = client.post('/api/rollout-results/merge', json=body)
+    assert result.status_code == 201, result.text
+    merged = result.json()
+    assert [a['number'] for a in merged['attempts']] == [1, 2]
+    assert merged['attempts'][0]['outcome'] == 'success'
+    assert merged['attempts'][0]['notes'] == 'Saved judgment'
+    assert merged['attempts'][0]['source']['id'] == first['id']
+    assert merged['target_count'] == 2
+    assert client.post('/api/rollout-results/merge', json=body).json() == merged
+    assert client.get('/api/rollout-results/merged').json() == [merged]
+    assert all(path.read_bytes() == data for path, data in source_files.items())
+    archive = {'kind': 'merged', 'id': merged['id']}
+    assert client.post('/api/rollout-results/archive', json=archive).json()['archived'] == [archive]
+    assert client.post('/api/rollout-results/restore', json=archive).json()['archived'] == []
+    assert client.get('/api/rollout-results/merged').json() == [merged]
+    # Later source judgments do not silently change a saved merged report.
+    client.post(f"/api/rollout-validations/{first['id']}/outcome",
+                json={'job_id': job_id, 'outcome': 'failure', 'notes': 'Later judgment'})
+    assert client.get('/api/rollout-results/merged').json()[0]['attempts'][0]['outcome'] == 'success'
+    overlap = {**merge_body(first), 'sources': [archive, {'kind': 'validation', 'id': first['id']}]}
+    refused = client.post('/api/rollout-results/merge', json=overlap)
+    assert refused.status_code == 409 and 'overlap' in refused.text
+
+
+def test_result_merge_refuses_different_conditions_active_and_deleted(client):
+    first = finished_validation(client)
+    second = finished_validation(client, instruction='Different instruction')
+    assert client.post('/api/rollout-results/merge', json=merge_body(first, second)).status_code == 409
+    third, _ = start(client, target_count=1)
+    assert client.post('/api/rollout-results/merge', json=merge_body(first, third)).status_code == 409
+    trial_status(client, third, released=True)
+    ref = {'kind': 'validation', 'id': first['id']}
+    assert client.post('/api/rollout-results/archive', json=ref).status_code == 200
+    assert client.post('/api/rollout-results/merge', json=merge_body(first, third)).status_code == 409
+    assert client.get('/api/rollout-results/merged').json() == []
