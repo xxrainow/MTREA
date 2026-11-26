@@ -57,6 +57,9 @@ def start(body: RolloutBody, request: Request):
             raise HardwareBusy("Stop collection before starting a rollout")
         if state.hardware.backend.name != "real":
             raise ValueError("Robot rollout is unavailable in fake hardware mode")
+        if any(value['state'] not in {'completed', 'ended'}
+               for value in state.rollout_validation.list(state.runner)):
+            raise JobConflict('Continue or end the current validation before starting a standalone rollout')
         job = state.rollout.start(body.config(), state.runner, remote,
                                   prepare_devices=state.cameras.stop)
         return state.rollout.snapshot(job)

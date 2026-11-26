@@ -2,23 +2,34 @@ import { useEffect, useRef, useState } from 'react';
 import { errorMessage } from '../api/hardware';
 import { loadRolloutLog } from '../api/rollouts';
 import type { useRollouts } from '../hooks/useRollouts';
+import type { useRolloutValidations } from '../hooks/useRolloutValidations';
 import RolloutCamera from './RolloutCamera';
+import ValidationAttemptReview from './ValidationAttemptReview';
+import NextValidationAttempt from './NextValidationAttempt';
+import { validationStateLabels } from '../api/rolloutValidations';
 import './RolloutWorkspace.css';
 
 type Props = {
   rollout: ReturnType<typeof useRollouts>;
+  validations: ReturnType<typeof useRolloutValidations>;
   open: boolean;
   onClose: () => void;
   onKeepOpen: () => void;
 };
 
-export default function RolloutWorkspace({ rollout, open, onClose, onKeepOpen }: Props) {
+export default function RolloutWorkspace({ rollout, validations, open, onClose, onKeepOpen }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [logs, setLogs] = useState({ id: '', content: '', error: '' });
+  const [dirtyReview, setDirtyReview] = useState({ id: '', dirty: false });
   const selected = rollout.selected;
   const status = selected?.status;
   const id = selected?.job.id ?? '';
-  const canClose = !rollout.owner && !rollout.busy;
+  const validation = validations.items?.find(item => item.attempts.some(attempt => attempt.rollout.job.id === id));
+  const attempt = validation?.attempts.find(item => item.rollout.job.id === id);
+  const unsaved = dirtyReview.id === id && dirtyReview.dirty;
+  const canClose = !rollout.owner && !rollout.busy && !validations.busy && !unsaved;
+  const canNext = validation?.can_next && !rollout.owner && !rollout.busy && !validations.busy
+    && !rollout.pollError && !validations.pollError && !unsaved;
   const canStop = Boolean(selected?.owner_alive) && ['connecting', 'running', 'stopping'].includes(selected?.state ?? '')
     && !rollout.busy;
   const canRelease = Boolean(selected?.owner_alive) && ['stopped', 'failed', 'aborted'].includes(selected?.state ?? '')
@@ -37,6 +48,14 @@ export default function RolloutWorkspace({ rollout, open, onClose, onKeepOpen }:
     const element = dialog.current;
     return () => element?.close();
   }, []);
+
+  useEffect(() => {
+    const element = dialog.current;
+    if (element?.open) {
+      element.scrollTop = 0;
+      element.querySelector<HTMLElement>('#rollout-workspace-title')?.focus({ preventScroll: true });
+    }
+  }, [id]);
 
   function close() {
     if (!canClose) return;
@@ -73,6 +92,7 @@ export default function RolloutWorkspace({ rollout, open, onClose, onKeepOpen }:
       <div>
         <h2 id="rollout-workspace-title" tabIndex={-1} autoFocus>Rollout execution</h2>
         <p id="rollout-workspace-instruction">{selected?.session?.task ?? String(selected?.job.spec.metadata?.instruction ?? '—')}</p>
+        {validation && <p className="rollout-round">Attempt {attempt?.number} / {validation.session.target_count} · {validationStateLabels[validation.state]}</p>}
       </div>
       <span className="run-status" role="status">{selected?.state ?? 'Waiting for rollout'}</span>
       <button type="button" className="run-button" disabled={!canClose} onClick={close}>Close workspace</button>
@@ -85,6 +105,18 @@ export default function RolloutWorkspace({ rollout, open, onClose, onKeepOpen }:
       </dl>
       {rollout.pollError && <p role="alert">Cannot refresh rollout state: {rollout.pollError}. Last known state is shown.</p>}
       {rollout.actionError && <p role="alert">{rollout.actionError}</p>}
+      {validations.pollError && <p role="alert">Cannot refresh validation: {validations.pollError}</p>}
+      {validations.actionError && <p role="alert">{validations.actionError}</p>}
+      {validation?.session.server_mode === 'hold' && <p className="run-note">Hold mode · communication testing with simulated responses; no model inference.</p>}
+      {unsaved && <p className="run-note" role="status">Save or discard outcome edits before switching attempts, starting the next attempt or closing.</p>}
+      {validation && <section className="rollout-attempts" aria-label="Validation attempts">
+        <p>{validation.started_count} / {validation.session.target_count} started · {validation.released_count} released · {validation.judged_count} judged</p>
+        <div>{validation.attempts.map(item => <button key={item.rollout.job.id} type="button" className="run-button"
+          aria-pressed={item.rollout.job.id === id} disabled={Boolean(rollout.owner) || rollout.busy || validations.busy || unsaved}
+          onClick={() => rollout.select(item.rollout.job.id)}>
+          #{item.number} · {item.outcome} · {item.rollout.state}
+        </button>)}</div>
+      </section>}
       <div className="rollout-workspace-grid">
         <section className="run-panel" aria-labelledby="rollout-camera-heading">
           <div className="run-panel-header"><h2 id="rollout-camera-heading">Camera preview</h2>
@@ -115,6 +147,9 @@ export default function RolloutWorkspace({ rollout, open, onClose, onKeepOpen }:
           {rollout.notice && <p role="status" className="run-note">{rollout.notice}</p>}
         </section>
       </div>
+      {validation && attempt && <ValidationAttemptReview key={id} validation={validation} attempt={attempt}
+        validations={validations} blocked={rollout.busy || validations.busy || Boolean(validations.pollError)}
+        onDirtyChange={dirty => setDirtyReview({ id, dirty })} />}
       <details className="run-panel rollout-workspace-logs">
         <summary>Execution logs</summary>
         {logs.id === id && logs.error && <p role="alert">{logs.error}</p>}
@@ -125,10 +160,15 @@ export default function RolloutWorkspace({ rollout, open, onClose, onKeepOpen }:
       <div>
         <strong>{rollout.owner ? 'Robot ownership retained' : status?.arm_released ? 'Arm released' : 'Robot ownership not confirmed'}</strong>
         <p>{rollout.owner ? 'Stop keeps torque and ownership. Release arm is required before closing.'
-          : status?.arm_released ? 'This execution has ended. Close to return to rollout settings.'
+          : status?.arm_released ? validation?.can_next
+            ? 'Reset the scene and confirm readiness for the next attempt, or close to pause validation.'
+            : 'This execution has ended. Close to return to rollout settings.'
             : 'Inspect the recorded status. Physical arm state has not been verified.'}</p>
       </div>
       <div className="run-actions">
+        {validation && !['completed', 'ended'].includes(validation.state) && validation.started_count < validation.session.target_count
+          && <NextValidationAttempt key={`${validation.id}:${validation.started_count}`} validation={validation}
+            enabled={Boolean(canNext)} onStart={() => { onKeepOpen(); void validations.next(validation); }} />}
         <button type="button" className="run-button rollout-stop" disabled={!canStop} onClick={() => command('stop')}>
           {rollout.pending?.action === 'stop' ? 'Waiting for Stop…' : 'Stop execution'}</button>
         <button type="button" className="run-button" disabled={!canRelease} onClick={() => command('release')}>

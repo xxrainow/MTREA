@@ -52,6 +52,16 @@
 .rollout-workspace-footer p { margin: 6px 0 0; color: var(--lab-muted); font-size: 12px; line-height: 1.5; }
 .rollout-workspace-footer .run-actions { margin: 0; flex-shrink: 0; }
 .rollout-workspace .rollout-stop { border-color: var(--lab-accent); font-weight: 600; }
+.rollout-workspace-header .rollout-round { margin-top: 6px; color: var(--lab-muted); font-size: 13px; }
+.rollout-attempts { margin-bottom: 20px; }
+.rollout-attempts > p { color: var(--lab-muted); font-size: 13px; }
+.rollout-attempts > div { display: flex; flex-wrap: wrap; gap: 8px; max-height: 140px; overflow-y: auto; }
+.rollout-attempts [aria-pressed='true'] { border-color: var(--lab-accent); }
+.rollout-outcome { margin-top: 20px; }
+.rollout-outcome .run-number-fields { margin-top: 16px; }
+.rollout-next-attempt { display: grid; gap: 8px; }
+.rollout-next-attempt label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.rollout-workspace-footer .run-actions { flex-shrink: 1; align-items: end; }
 @media (max-width: 1000px) {
   .rollout-workspace-grid { grid-template-columns: 1fr; }
   .rollout-workspace-footer { flex-wrap: wrap; }

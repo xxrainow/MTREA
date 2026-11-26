@@ -12,10 +12,12 @@ import {
 } from '../api/serving';
 import type { PolicyCheckpoint, PolicySession } from '../api/serving';
 import { loadJobLog, stopJob } from '../api/training';
+import { validationStateLabels } from '../api/rolloutValidations';
 
 import RolloutPanel from '../components/RolloutPanel';
 import RolloutWorkspace from '../components/RolloutWorkspace';
 import { useRollouts } from '../hooks/useRollouts';
+import { useRolloutValidations } from '../hooks/useRolloutValidations';
 
 import './RunPage.css';
 
@@ -27,9 +29,11 @@ function RunPage() {
   const [tab, setTab] = useState<RunTab>(() => sessionStorage.getItem(tabKey) === 'rollout' ? 'rollout' : 'policy');
   const [selectedServerId, setSelectedServerId] = useState(() => sessionStorage.getItem(serverKey) ?? '');
   const rollout = useRollouts();
+  const validations = useRolloutValidations(rollout);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const ownedServer = rollout.owner?.job.spec.metadata?.server_job_id;
-  const rolloutServerId = typeof ownedServer === 'string' ? ownedServer : null;
+  const rolloutServerId = typeof ownedServer === 'string' ? ownedServer
+    : validations.active?.session.configuration.server_job_id ?? null;
 
   function selectTab(next: RunTab) {
     sessionStorage.setItem(tabKey, next);
@@ -37,7 +41,7 @@ function RunPage() {
   }
 
   function selectServer(id: string) {
-    if (rollout.owner || rollout.busy) return;
+    if (rollout.owner || rollout.busy || validations.active || validations.busy) return;
     sessionStorage.setItem(serverKey, id);
     setSelectedServerId(id);
   }
@@ -169,7 +173,7 @@ function RunPage() {
     sessions !== null &&
     !sessionError &&
     !policyRunning &&
-    !startingPolicy;
+    !startingPolicy && !validations.active && !validations.busy;
 
   async function handleStartPolicy() {
     if (!canStartPolicy) return;
@@ -194,7 +198,7 @@ function RunPage() {
 
   async function handleStopPolicy(jobId: string) {
     if (stoppingPolicyId !== null || rolloutServerId === jobId
-      || rollout.busy || rollout.pollError || rollout.items === null) return;
+      || rollout.busy || validations.busy || rollout.pollError || rollout.items === null) return;
 
     setStoppingPolicyId(jobId);
     setPolicyError('');
@@ -276,6 +280,16 @@ function RunPage() {
         {sessionError && <p role="alert">{sessionError}</p>}
         {(selectedServer?.unreachable || selectedServer?.read_error) && <p role="alert">{selectedServer.unreachable || selectedServer.read_error}</p>}
         {rollout.pollError && <p role="alert">Cannot verify robot ownership: {rollout.pollError}</p>}
+        {validations.pollError && <p role="alert">Cannot refresh validation: {validations.pollError}</p>}
+        {validations.active && <div className="run-owner-notice">
+          <span>Validation · {validations.active.started_count} / {validations.active.session.target_count} attempts · {validationStateLabels[validations.active.state]}. Policy selection stays fixed until validation ends.</span>
+          <button type="button" className="run-button" disabled={validations.busy || rollout.busy} onClick={() => {
+            selectTab('rollout');
+            if (validations.active?.attempts.length) {
+              validations.select(validations.active.id); setWorkspaceOpen(true);
+            }
+          }}>Continue validation</button>
+        </div>}
         {rollout.owner && <div className="run-owner-notice" role="status">
           <span>Robot ownership retained · {rollout.owner.state}. Stop and Release are in Rollout execution.</span>
           {tab === 'policy' && <button type="button" className="run-button" onClick={() => selectTab('rollout')}>Open current rollout</button>}
@@ -358,12 +372,12 @@ function RunPage() {
 
                     <div className="run-session-actions">
                       <button type="button" className="run-button" aria-pressed={effectiveServerId === session.job.id}
-                        disabled={Boolean(rollout.owner) || rollout.busy}
+                        disabled={Boolean(rollout.owner) || rollout.busy || Boolean(validations.active) || validations.busy}
                         onClick={() => selectServer(session.job.id)}>
                         {effectiveServerId === session.job.id ? 'Selected session' : 'Select session'}
                       </button>
                       {policySessionReady(session) && <button type="button" className="run-button run-button-primary"
-                        disabled={Boolean(rollout.owner) || rollout.busy || Boolean(sessionError)}
+                        disabled={Boolean(rollout.owner) || rollout.busy || Boolean(validations.active) || validations.busy || Boolean(sessionError)}
                         onClick={() => { selectServer(session.job.id); selectTab('rollout'); }}>
                         Use for rollout
                       </button>}
@@ -391,7 +405,7 @@ function RunPage() {
                         type="button"
                         className="run-button"
                         disabled={
-                          rolloutServerId === session.job.id || rollout.busy || Boolean(rollout.pollError) || rollout.items === null ||
+                          rolloutServerId === session.job.id || rollout.busy || validations.busy || Boolean(rollout.pollError) || rollout.items === null ||
                           stoppingPolicyId !== null ||
                           !['running', 'queued'].includes(session.job.status)
                         }
@@ -543,11 +557,11 @@ function RunPage() {
       </div>
 
       <div className="run-main" role="tabpanel" id="run-panel-rollout" aria-labelledby="run-tab-rollout" hidden={tab !== 'rollout'}>
-        <RolloutPanel sessions={sessions} sessionError={sessionError} rollout={rollout}
+        <RolloutPanel sessions={sessions} sessionError={sessionError} rollout={rollout} validations={validations}
           serverId={effectiveServerId} onServerChange={selectServer} onPrepareServer={() => selectTab('policy')}
           onOpenWorkspace={() => setWorkspaceOpen(true)} />
       </div>
-      <RolloutWorkspace rollout={rollout} open={workspaceOpen || Boolean(rollout.owner)}
+      <RolloutWorkspace rollout={rollout} validations={validations} open={workspaceOpen || Boolean(rollout.owner)}
         onClose={() => setWorkspaceOpen(false)} onKeepOpen={() => setWorkspaceOpen(true)} />
     </main>
   );

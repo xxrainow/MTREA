@@ -122,8 +122,11 @@ class RolloutService:
                 "configuration": asdict(config)}
 
     def start(self, config: RolloutConfig, runner: Runner, remote: Remote | None,
-              *, prepare_devices=None) -> Job:
+              *, prepare_devices=None, validation: dict | None = None,
+              expected_checkpoint: str | None = None) -> Job:
         checked = self.check(config, runner, remote)
+        if expected_checkpoint is not None and checked['checkpoint'] != expected_checkpoint:
+            raise ValueError("The policy checkpoint changed; create a new validation")
         if prepare_devices is not None:
             prepare_devices()
         trial = self.root / uuid4().hex
@@ -136,7 +139,8 @@ class RolloutService:
             kind=JobKind.ROLLOUT, executor=Executor.LOCAL, cmd=serving.command(argv),
             cwd=str(runner.repo_root), run_dir=str(trial), label=config.instruction,
             metadata={**asdict(config), "checkpoint": checked["checkpoint"],
-                      "server_address": checked["server_address"], "argv": argv},
+                      "server_address": checked["server_address"], "argv": argv,
+                      **({"validation": validation} if validation else {})},
         ))
 
     def command(self, job_id: str, action: str, runner: Runner) -> dict:
