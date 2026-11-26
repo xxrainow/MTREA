@@ -2,16 +2,18 @@ import { useEffect, useState } from 'react';
 import { errorMessage } from '../api/hardware';
 import { checkRollout, loadRolloutLog } from '../api/rollouts';
 import type { PolicySession } from '../api/serving';
-import { useRollouts } from '../hooks/useRollouts';
+import { policySessionReady } from '../api/serving';
+import type { useRollouts } from '../hooks/useRollouts';
 import RolloutCamera from './RolloutCamera';
 
-export default function RolloutPanel({ sessions, sessionError, onServerInUse }: {
+export default function RolloutPanel({ sessions, sessionError, rollout, serverId, onServerChange, onPrepareServer }: {
   sessions: PolicySession[] | null;
   sessionError: string;
-  onServerInUse: (id: string | null) => void;
+  rollout: ReturnType<typeof useRollouts>;
+  serverId: string;
+  onServerChange: (id: string) => void;
+  onPrepareServer: () => void;
 }) {
-  const rollout = useRollouts();
-  const [serverId, setServerId] = useState('');
   const [instruction, setInstruction] = useState('');
   const [targetLimit, setTargetLimit] = useState('');
   const [timeLimit, setTimeLimit] = useState('');
@@ -25,16 +27,8 @@ export default function RolloutPanel({ sessions, sessionError, onServerInUse }: 
   const id = selected?.job.id ?? '';
   const ownedServer = rollout.owner?.job.spec.metadata?.server_job_id;
   const ownerMetadata = rollout.owner?.job.spec.metadata;
-  useEffect(() => {
-    onServerInUse(typeof ownedServer === 'string' ? ownedServer : null);
-    return () => onServerInUse(null);
-  }, [ownedServer, onServerInUse]);
-
-  const readySessions = (sessions ?? []).filter((item) =>
-    ['ready', 'serving'].includes(item.state) && ['running', 'queued'].includes(item.job.status)
-    && !item.unreachable && !item.read_error
-    && (item.job.spec.executor === 'local' || item.tunnel?.status === 'running'));
-  const chosenId = (typeof ownedServer === 'string' ? ownedServer : '') || serverId || readySessions[0]?.job.id || '';
+  const readySessions = (sessions ?? []).filter(policySessionReady);
+  const chosenId = (typeof ownedServer === 'string' ? ownedServer : '') || serverId;
   const server = readySessions.find((item) => item.job.id === chosenId);
   const body = { server_job_id: chosenId, instruction: instruction.trim(),
     max_relative_target: Number(targetLimit), time_limit_s: Number(timeLimit) };
@@ -93,16 +87,16 @@ export default function RolloutPanel({ sessions, sessionError, onServerInUse }: 
   return <>
     <section className="run-panel" aria-labelledby="rollout-heading">
       <div className="run-panel-header">
-        <h2 id="rollout-heading">Robot execution</h2>
+        <h2 id="rollout-heading">Rollout settings</h2>
         <span className="run-status">On this machine</span>
       </div>
       <p className="run-description">Start connects to the real follower and cameras. Stop keeps torque and device ownership. Release arm turns torque off and disconnects.</p>
       <div className="run-execution-form">
         <label className="run-field">Policy server session
-          <select value={chosenId} disabled={blocked} onChange={(event) => setServerId(event.target.value)}>
+          <select value={chosenId} disabled={blocked} onChange={(event) => onServerChange(event.target.value)}>
             <option value="">Select a ready session</option>
-            {rollout.owner && !readySessions.some((item) => item.job.id === chosenId)
-              && <option value={chosenId}>{chosenId} · current rollout server</option>}
+            {chosenId && !readySessions.some((item) => item.job.id === chosenId)
+              && <option value={chosenId}>{chosenId} · {rollout.owner ? 'current rollout server' : 'not ready'}</option>}
             {readySessions.map((item) => <option key={item.job.id} value={item.job.id}>
               {item.job.spec.label} · {item.job.spec.executor === 'local' ? 'This machine' : 'GPU host'}
               {item.job.spec.metadata?.mode === 'hold' ? ' · hold' : ' · real'}
@@ -125,7 +119,10 @@ export default function RolloutPanel({ sessions, sessionError, onServerInUse }: 
         </div>
       </div>
       <p className="run-description">Joint limits use degrees; the gripper uses 0–100. Hold returns observed positions and still connects to the real arm.</p>
-      {readySessions.length === 0 && <p className="run-note">Prepare a policy server first. GPU sessions also need a running SSH tunnel.</p>}
+      {!server && <div className="run-note">
+        <p>Prepare a ready policy server first. GPU sessions also need a running SSH tunnel.</p>
+        <button type="button" className="run-button" onClick={onPrepareServer}>Manage policy servers</button>
+      </div>}
       <div className="run-actions">
         <button className="run-button" type="button" disabled={!canCheck} onClick={() => void check()}>
           {checking ? 'Checking…' : 'Check rollout settings'}</button>

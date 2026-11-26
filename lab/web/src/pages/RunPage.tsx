@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { loadDatasets } from '../api/datasets';
 import type { DatasetSummary } from '../api/datasets';
 import { errorMessage } from '../api/hardware';
@@ -6,23 +7,55 @@ import {
   loadPolicyCheckpoints,
   loadPolicySessions,
   openPolicyTunnel,
+  policySessionReady,
   startPolicy,
 } from '../api/serving';
 import type { PolicyCheckpoint, PolicySession } from '../api/serving';
 import { loadJobLog, stopJob } from '../api/training';
 
 import RolloutPanel from '../components/RolloutPanel';
+import { useRollouts } from '../hooks/useRollouts';
 
 import './RunPage.css';
 
+type RunTab = 'policy' | 'rollout';
+const tabKey = 'lab.run.tab';
+const serverKey = 'lab.run.server';
+
 function RunPage() {
+  const [tab, setTab] = useState<RunTab>(() => sessionStorage.getItem(tabKey) === 'rollout' ? 'rollout' : 'policy');
+  const [selectedServerId, setSelectedServerId] = useState(() => sessionStorage.getItem(serverKey) ?? '');
+  const rollout = useRollouts();
+  const ownedServer = rollout.owner?.job.spec.metadata?.server_job_id;
+  const rolloutServerId = typeof ownedServer === 'string' ? ownedServer : null;
+
+  function selectTab(next: RunTab) {
+    sessionStorage.setItem(tabKey, next);
+    setTab(next);
+  }
+
+  function selectServer(id: string) {
+    if (rollout.owner || rollout.busy) return;
+    sessionStorage.setItem(serverKey, id);
+    setSelectedServerId(id);
+  }
+
+  function handleTabKey(event: KeyboardEvent<HTMLButtonElement>) {
+    let next: RunTab;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') next = tab === 'policy' ? 'rollout' : 'policy';
+    else if (event.key === 'Home') next = 'policy';
+    else if (event.key === 'End') next = 'rollout';
+    else return;
+    event.preventDefault();
+    selectTab(next);
+    document.getElementById(`run-tab-${next}`)?.focus();
+  }
   const [target, setTarget] = useState<'ssh' | 'local'>('ssh');
   const [mode, setMode] = useState<'real' | 'hold'>('real');
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
   const [datasetName, setDatasetName] = useState('');
   const [datasetError, setDatasetError] = useState('');
   const [checkpoint, setCheckpoint] = useState('');
-  const [rolloutServerId, setRolloutServerId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<PolicySession[] | null>(null);
   const [sessionError, setSessionError] = useState('');
 
@@ -112,6 +145,15 @@ function RunPage() {
     return () => controller.abort();
   }, []);
 
+  const selectedServer = sessions?.find(item => item.job.id === (rolloutServerId ?? selectedServerId))
+    ?? (rolloutServerId ? null : sessions?.find(policySessionReady)
+      ?? sessions?.find(item => ['running', 'queued'].includes(item.job.status))) ?? null;
+  const effectiveServerId = rolloutServerId ?? selectedServer?.job.id ?? '';
+  const selectedCheckpoint = selectedServer?.status?.checkpoint
+    ?? selectedServer?.job.spec.metadata?.checkpoint
+    ?? rollout.owner?.session?.checkpoint
+    ?? rollout.owner?.job.spec.metadata?.checkpoint;
+
   const policyRunning =
     sessions?.some(
       (session) =>
@@ -134,12 +176,13 @@ function RunPage() {
     setPolicyError('');
 
     try {
-      await startPolicy({
+      const job = await startPolicy({
         target,
         mode,
         source_job_id: target === 'ssh' ? checkpoint : null,
         dataset_name: target === 'local' ? datasetName : null,
       });
+      selectServer(job.id);
     } catch (reason) {
       setPolicyError(errorMessage(reason));
     } finally {
@@ -148,7 +191,8 @@ function RunPage() {
   }
 
   async function handleStopPolicy(jobId: string) {
-    if (stoppingPolicyId !== null || rolloutServerId === jobId) return;
+    if (stoppingPolicyId !== null || rolloutServerId === jobId
+      || rollout.busy || rollout.pollError || rollout.items === null) return;
 
     setStoppingPolicyId(jobId);
     setPolicyError('');
@@ -207,7 +251,36 @@ function RunPage() {
         <p>Run a trained policy and record rollout results.</p>
       </div>
 
-      <div className="run-layout">
+      <div className="run-tabs" role="tablist" aria-label="Run and evaluate sections">
+        {(['policy', 'rollout'] as const).map(item => <button key={item}
+          type="button" role="tab" id={`run-tab-${item}`} aria-controls={`run-panel-${item}`}
+          aria-selected={tab === item} tabIndex={tab === item ? 0 : -1}
+          onKeyDown={handleTabKey} onClick={() => selectTab(item)}>
+          {item === 'policy' ? 'Policy server' : 'Rollout execution'}
+        </button>)}
+      </div>
+
+      <section className="run-panel run-context" aria-label="Selected policy server">
+        <div className="run-panel-header">
+          <h2>Selected policy</h2>
+          <span className="run-status">{sessionError ? 'Server status unavailable' : selectedServer?.state ?? (sessions === null ? 'Loading…' : 'No session selected')}</span>
+        </div>
+        <dl className="run-context-details">
+          <div><dt>Server session</dt><dd>{selectedServer?.job.spec.label ?? (effectiveServerId || 'Select or start a policy server')}</dd></div>
+          <div><dt>Checkpoint / policy</dt><dd>{String(selectedCheckpoint ?? '—')}</dd></div>
+          <div><dt>Target / mode</dt><dd>{selectedServer ? `${selectedServer.job.spec.executor === 'local' ? 'This machine' : 'GPU host'} · ${selectedServer.job.spec.metadata?.mode ?? '—'}` : '—'}</dd></div>
+          <div><dt>SSH tunnel</dt><dd>{selectedServer ? selectedServer.job.spec.executor === 'local' ? 'Not required' : selectedServer.tunnel?.status ?? 'Not opened' : '—'}</dd></div>
+        </dl>
+        {sessionError && <p role="alert">{sessionError}</p>}
+        {(selectedServer?.unreachable || selectedServer?.read_error) && <p role="alert">{selectedServer.unreachable || selectedServer.read_error}</p>}
+        {rollout.pollError && <p role="alert">Cannot verify robot ownership: {rollout.pollError}</p>}
+        {rollout.owner && <div className="run-owner-notice" role="status">
+          <span>Robot ownership retained · {rollout.owner.state}. Stop and Release are in Rollout execution.</span>
+          {tab === 'policy' && <button type="button" className="run-button" onClick={() => selectTab('rollout')}>Open current rollout</button>}
+        </div>}
+      </section>
+
+      <div className="run-layout" role="tabpanel" id="run-panel-policy" aria-labelledby="run-tab-policy" hidden={tab !== 'policy'}>
         <div className="run-main">
           <section className="run-panel">
             <h2>Policy server sessions</h2>
@@ -221,7 +294,7 @@ function RunPage() {
             ) : (
               <ul className="run-sessions">
                 {sessions.map((session) => (
-                  <li key={session.job.id} className="run-session">
+                  <li key={session.job.id} className={`run-session${effectiveServerId === session.job.id ? ' is-selected' : ''}`}>
                     <div>
                       {session.job.spec.label} · {session.state}
                     </div>
@@ -282,6 +355,16 @@ function RunPage() {
                     )}
 
                     <div className="run-session-actions">
+                      <button type="button" className="run-button" aria-pressed={effectiveServerId === session.job.id}
+                        disabled={Boolean(rollout.owner) || rollout.busy}
+                        onClick={() => selectServer(session.job.id)}>
+                        {effectiveServerId === session.job.id ? 'Selected session' : 'Select session'}
+                      </button>
+                      {policySessionReady(session) && <button type="button" className="run-button run-button-primary"
+                        disabled={Boolean(rollout.owner) || rollout.busy || Boolean(sessionError)}
+                        onClick={() => { selectServer(session.job.id); selectTab('rollout'); }}>
+                        Use for rollout
+                      </button>}
                       {session.job.spec.executor === 'ssh' && (
                       <button
                         type="button"
@@ -306,7 +389,7 @@ function RunPage() {
                         type="button"
                         className="run-button"
                         disabled={
-                          rolloutServerId === session.job.id ||
+                          rolloutServerId === session.job.id || rollout.busy || Boolean(rollout.pollError) || rollout.items === null ||
                           stoppingPolicyId !== null ||
                           !['running', 'queued'].includes(session.job.status)
                         }
@@ -342,7 +425,6 @@ function RunPage() {
               </ul>
             )}
           </section>
-          <RolloutPanel sessions={sessions} sessionError={sessionError} onServerInUse={setRolloutServerId} />
         </div>
 
         <div className="run-controls">
@@ -455,41 +537,13 @@ function RunPage() {
             {policyError && <p role="alert">{policyError}</p>}
           </section>
 
-          <section className="run-panel">
-            <h2>Rollout results</h2>
-
-            <p className="run-description">
-              Record whether the rollout succeeded after execution finishes.
-            </p>
-
-            <div className="run-actions">
-              <button type="button" className="run-button" disabled>
-                Success
-              </button>
-              <button type="button" className="run-button" disabled>
-                Failure
-              </button>
-            </div>
-
-            <p className="run-note">
-              Result recording integration is pending. Results will be appended
-              without deleting or overwriting existing records.
-            </p>
-          </section>
         </div>
       </div>
 
-      <section className="run-panel run-history">
-        <div className="run-panel-header">
-          <h2>Evaluation history</h2>
-          <span className="run-status">Integration pending</span>
-        </div>
-
-        <p className="run-description">
-          Rollout records and absolute success rates for each task will be
-          displayed here.
-        </p>
-      </section>
+      <div className="run-main" role="tabpanel" id="run-panel-rollout" aria-labelledby="run-tab-rollout" hidden={tab !== 'rollout'}>
+        <RolloutPanel sessions={sessions} sessionError={sessionError} rollout={rollout}
+          serverId={effectiveServerId} onServerChange={selectServer} onPrepareServer={() => selectTab('policy')} />
+      </div>
     </main>
   );
 }

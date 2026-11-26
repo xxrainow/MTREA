@@ -387,5 +387,21 @@ review; nobody pushes to main directly.
   errors are shown separately from checkpoint metadata. Train and Checkpoint
   share the same curve components, including explicit Fake labels.
 
+- Run & Evaluate redesign stage 1 uses Policy server / Rollout execution tabs.
+  Both remain mounted, preserving form inputs, preflight and command state across
+  tab switches. One page-level useRollouts instance tracks ownership regardless
+  of the visible tab. Selected session/checkpoint/state/target/mode/tunnel are
+  shown above both tabs; an owner pins the server selection until Release.
+  Ready sessions offer Use for rollout. Tab and explicitly selected server are
+  retained in sessionStorage; backend records still determine ownership. Server
+  Stop is disabled during unknown ownership, pending rollout actions or ownership
+  by that server. Unconnected success/failure and evaluation-history placeholders
+  were removed. Execution still uses the existing inline single-trial monitor;
+  the dedicated execution workspace, repeated validation and separate grouped
+  results page are subsequent stages. Build/lint and isolated mock-API browser
+  checks cover tab/keyboard switching, input/preflight preservation, server Stop
+  exclusion, Stop/Release acknowledgements and reload recovery. No hardware/GPU
+  execution was performed for this UI change.
+
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.
