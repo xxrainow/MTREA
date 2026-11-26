@@ -14,6 +14,7 @@ import type { PolicyCheckpoint, PolicySession } from '../api/serving';
 import { loadJobLog, stopJob } from '../api/training';
 
 import RolloutPanel from '../components/RolloutPanel';
+import RolloutWorkspace from '../components/RolloutWorkspace';
 import { useRollouts } from '../hooks/useRollouts';
 
 import './RunPage.css';
@@ -26,6 +27,7 @@ function RunPage() {
   const [tab, setTab] = useState<RunTab>(() => sessionStorage.getItem(tabKey) === 'rollout' ? 'rollout' : 'policy');
   const [selectedServerId, setSelectedServerId] = useState(() => sessionStorage.getItem(serverKey) ?? '');
   const rollout = useRollouts();
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const ownedServer = rollout.owner?.job.spec.metadata?.server_job_id;
   const rolloutServerId = typeof ownedServer === 'string' ? ownedServer : null;
 
@@ -542,8 +544,11 @@ function RunPage() {
 
       <div className="run-main" role="tabpanel" id="run-panel-rollout" aria-labelledby="run-tab-rollout" hidden={tab !== 'rollout'}>
         <RolloutPanel sessions={sessions} sessionError={sessionError} rollout={rollout}
-          serverId={effectiveServerId} onServerChange={selectServer} onPrepareServer={() => selectTab('policy')} />
+          serverId={effectiveServerId} onServerChange={selectServer} onPrepareServer={() => selectTab('policy')}
+          onOpenWorkspace={() => setWorkspaceOpen(true)} />
       </div>
+      <RolloutWorkspace rollout={rollout} open={workspaceOpen || Boolean(rollout.owner)}
+        onClose={() => setWorkspaceOpen(false)} onKeepOpen={() => setWorkspaceOpen(true)} />
     </main>
   );
 }

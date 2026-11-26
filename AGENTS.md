@@ -403,5 +403,22 @@ review; nobody pushes to main directly.
   exclusion, Stop/Release acknowledgements and reload recovery. No hardware/GPU
   execution was performed for this UI change.
 
+- Run & Evaluate redesign stage 2 moves the inline monitor into a native modal
+  execution workspace outside both tab panels. Rollout settings stay on the tab;
+  Start opens the workspace, and a recovered owner automatically reopens it when
+  returning to Run & Evaluate after navigation/reload. Camera observations occupy
+  the main area, with status/metrics beside them, collapsible execution logs and
+  sticky Stop/Release controls. No camera capture is started by the workspace.
+  Close and Escape are blocked while ownership or a pending command remains;
+  backdrop clicks do not close it. Stop retains ownership; Release failures allow
+  retry. Command completion still requires worker acknowledgement. Release does
+  not dismiss the workspace; Close explicitly closes the native dialog before
+  returning to settings. Losing an owner also leaves the last state/errors visible.
+  Recent rollouts can reopen the workspace for inspection. Build/lint, existing
+  training helper tests and isolated mock-API browser checks pass, covering camera
+  rendering, Escape, command waiting, reload recovery, Release failure/retry,
+  close/reopen and logs. Repeated validation and grouped results remain subsequent
+  stages; physical hardware/GPU validation was not performed.
+
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.
