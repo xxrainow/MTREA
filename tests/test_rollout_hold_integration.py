@@ -182,7 +182,8 @@ def test_hold_protocol_and_owner_lifecycle(hold_system, mode):
     assert metadata["git_commit"] and metadata["robot_id"] == "synthetic"
 
 
-def test_lab_api_drives_hold_owner_across_backend_restart(hold_system):
+@pytest.mark.parametrize('repeated', [False, True])
+def test_lab_api_drives_hold_owner_across_backend_restart(hold_system, repeated):
     from dataclasses import replace
 
     from fastapi.testclient import TestClient
@@ -237,9 +238,16 @@ def test_lab_api_drives_hold_owner_across_backend_restart(hold_system):
                                                              "server_port": port}),
             ))
             assert client.post("/api/rollouts/check", json=body).status_code == 200
-            response = client.post("/api/rollouts/start", json=body)
+            if repeated:
+                from uuid import uuid4
+                response = client.post('/api/rollout-validations/start', json={
+                    **body, 'target_count': 2, 'request_id': uuid4().hex})
+            else:
+                response = client.post("/api/rollouts/start", json=body)
             assert response.status_code == 201, response.text
-            job_id = response.json()["job"]["id"]
+            validation_id = response.json()['id'] if repeated else None
+            record = response.json()['attempts'][0]['rollout'] if repeated else response.json()
+            job_id = record['job']['id']
             wait_for(lambda: (state(client, job_id).get("status") or {}).get("actions_executed", 0) >= 3,
                      processes=[server, children[0]])
             assert paths.hardware_lock(data).exists()
@@ -274,6 +282,29 @@ def test_lab_api_drives_hold_owner_across_backend_restart(hold_system):
             final = state(restarted, job_id)
             assert final["status"]["arm_released"] and not final["owner_alive"]
             assert restarted.get(f"/api/rollouts/{job_id}/logs").status_code == 200
+            if repeated:
+                validation = restarted.get('/api/rollout-validations').json()[0]
+                assert validation['id'] == validation_id and validation['state'] == 'awaiting_next'
+                assert validation['started_count'] == 1
+                restarted.app.state.runner.executors[Executor.LOCAL] = FakeHardwareExecutor(REPO)
+                response = restarted.post(f'/api/rollout-validations/{validation_id}/next', json={
+                    'request_id': uuid4().hex, 'number': 2, 'scene_ready': True})
+                assert response.status_code == 201, response.text
+                second_id = response.json()['attempts'][-1]['rollout']['job']['id']
+                assert second_id != job_id
+                wait_for(lambda: (state(restarted, second_id).get('status') or {}).get('actions_executed', 0) >= 3,
+                         processes=[server, children[-1]])
+                response = restarted.post(f'/api/rollouts/{second_id}/stop')
+                assert response.status_code == 202
+                wait_for(lambda: command_done(restarted, second_id, response.json()['command_id']),
+                         processes=[server, children[-1]])
+                response = restarted.post(f'/api/rollouts/{second_id}/release')
+                assert response.status_code == 202
+                wait_for(lambda: command_done(restarted, second_id, response.json()['command_id']), processes=[server])
+                children[-1].wait(timeout=10)
+                validation = restarted.get('/api/rollout-validations').json()[0]
+                assert validation['state'] == 'completed' and validation['released_count'] == 2
+                assert validation['judged_count'] == 0
     finally:
         for child in children:
             if child.poll() is None:

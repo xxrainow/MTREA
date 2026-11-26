@@ -21,7 +21,9 @@ from lab.server import remote_api
 from lab.server import train_api
 from lab.server import serve_api
 from lab.server import rollout_api
+from lab.server import rollout_validation_api
 from lab.core.rollout import RolloutService
+from lab.core.rollout_validation import RolloutValidationService
 from lab.core.remote import RemoteError, RemoteNotConfigured, load_remote
 from lab.core.runner import JobConflict
 
@@ -61,6 +63,7 @@ def create_app(
         )
         app.state.collection_gate = Lock()
         app.state.rollout = RolloutService(data_base=resolved_data)
+        app.state.rollout_validation = RolloutValidationService(app.state.rollout)
         app.state.data_base = resolved_data
         app.state.remote_config = remote_config
         app.state.remote_transport = remote_transport
@@ -107,6 +110,7 @@ def create_app(
     application.include_router(train_api.router)
     application.include_router(serve_api.router)
     application.include_router(rollout_api.router)
+    application.include_router(rollout_validation_api.router)
 
     return application
 

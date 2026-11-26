@@ -34,6 +34,12 @@ export function useRollouts() {
     setSelectedId(id);
   }
 
+  function adopt(next: RolloutSnapshot) {
+    version.current += 1;
+    setItems(previous => [next, ...(previous ?? []).filter(item => item.job.id !== next.job.id)]);
+    select(next.job.id);
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     let timer: number | undefined;
@@ -154,6 +160,6 @@ export function useRollouts() {
     }
   }
 
-  return { items, selected, owner, select, start, command, posting, pending, notice,
+  return { items, selected, owner, select, adopt, start, command, posting, pending, notice,
     pollError, actionError, busy: posting || pending !== null };
 }

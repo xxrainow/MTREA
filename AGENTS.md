@@ -387,5 +387,68 @@ review; nobody pushes to main directly.
   errors are shown separately from checkpoint metadata. Train and Checkpoint
   share the same curve components, including explicit Fake labels.
 
+- Run & Evaluate redesign stage 1 uses Policy server / Rollout execution tabs.
+  Both remain mounted, preserving form inputs, preflight and command state across
+  tab switches. One page-level useRollouts instance tracks ownership regardless
+  of the visible tab. Selected session/checkpoint/state/target/mode/tunnel are
+  shown above both tabs; an owner pins the server selection until Release.
+  Ready sessions offer Use for rollout. Tab and explicitly selected server are
+  retained in sessionStorage; backend records still determine ownership. Server
+  Stop is disabled during unknown ownership, pending rollout actions or ownership
+  by that server. Unconnected success/failure and evaluation-history placeholders
+  were removed. Execution still uses the existing inline single-trial monitor;
+  the dedicated execution workspace, repeated validation and separate grouped
+  results page are subsequent stages. Build/lint and isolated mock-API browser
+  checks cover tab/keyboard switching, input/preflight preservation, server Stop
+  exclusion, Stop/Release acknowledgements and reload recovery. No hardware/GPU
+  execution was performed for this UI change.
+
+- Run & Evaluate redesign stage 2 moves the inline monitor into a native modal
+  execution workspace outside both tab panels. Rollout settings stay on the tab;
+  Start opens the workspace, and a recovered owner automatically reopens it when
+  returning to Run & Evaluate after navigation/reload. Camera observations occupy
+  the main area, with status/metrics beside them, collapsible execution logs and
+  sticky Stop/Release controls. No camera capture is started by the workspace.
+  Close and Escape are blocked while ownership or a pending command remains;
+  backdrop clicks do not close it. Stop retains ownership; Release failures allow
+  retry. Command completion still requires worker acknowledgement. Release does
+  not dismiss the workspace; Close explicitly closes the native dialog before
+  returning to settings. Losing an owner also leaves the last state/errors visible.
+  Recent rollouts can reopen the workspace for inspection. Build/lint, existing
+  training helper tests and isolated mock-API browser checks pass, covering camera
+  rendering, Escape, command waiting, reload recovery, Release failure/retry,
+  close/reopen and logs. Repeated validation and grouped results remain subsequent
+  stages; physical hardware/GPU validation was not performed.
+
+- Run & Evaluate redesign stage 3 adds an explicit 1–1000 attempt count to
+  Rollout settings and manual repeated validation. One validation freezes the
+  instruction, server job/checkpoint and execution limits; each attempt remains
+  an independent existing rollout-worker job. No attempt starts from polling,
+  elapsed time, Stop or Release. Next requires recorded arm_released, an inactive
+  owner/job, a new request ID with the expected attempt number and explicit
+  scene-reset/readiness confirmation. The backend rechecks server/hardware each
+  time and refuses checkpoint changes. One open validation blocks another and
+  standalone API starts; UI policy selection/server Stop stays locked until it
+  completes or is explicitly ended. Closing between attempts pauses the workflow;
+  End validation preserves partial results and never sends robot commands.
+  `data/rollouts/validation/<id>/session.json` is immutable and records configuration,
+  target count, exact instruction hash, checkpoint, server mode/target and commit.
+  `events.jsonl` appends attempt reservations, annotations and early-end events.
+  Job metadata links each attempt/request back to the validation, recovering
+  across backend restart without modifying historical trials. Duplicate requests
+  do not spawn another owner; unconfirmed starts block continuation, and torn event
+  tails are never overwritten. Existing runner/collection locks serialize mutations.
+  Workspace shows round progress and per-attempt manual success/failure/unjudged
+  plus notes; execution failures and time limits never assign task outcomes.
+  Annotation corrections append events. Unsaved edits require save/discard before
+  switching/continuing/closing; selecting or starting another attempt returns the
+  view to the cameras. Read polling is local and does not probe SSH. Dedicated
+  core/API and isolated real-API + synthetic-executor browser checks cover repeat,
+  readiness/Release gating, count limits, concurrency/idempotency, restart, partial
+  ending, annotations and edit protection. Build/lint pass. A two-attempt native
+  hold/restart scenario was added to the existing transport integration test but
+  is skipped when LeRobot is unavailable. No physical hardware or GPU was opened;
+  grouped result browsing remains the next stage.
+
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.

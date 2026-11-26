@@ -1,58 +1,48 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { errorMessage } from '../api/hardware';
-import { checkRollout, loadRolloutLog } from '../api/rollouts';
+import { checkValidation, validationStateLabels } from '../api/rolloutValidations';
+import type { useRolloutValidations } from '../hooks/useRolloutValidations';
 import type { PolicySession } from '../api/serving';
-import { useRollouts } from '../hooks/useRollouts';
-import RolloutCamera from './RolloutCamera';
+import { policySessionReady } from '../api/serving';
+import type { useRollouts } from '../hooks/useRollouts';
 
-export default function RolloutPanel({ sessions, sessionError, onServerInUse }: {
+export default function RolloutPanel({ sessions, sessionError, rollout, validations, serverId, onServerChange, onPrepareServer, onOpenWorkspace }: {
   sessions: PolicySession[] | null;
   sessionError: string;
-  onServerInUse: (id: string | null) => void;
+  rollout: ReturnType<typeof useRollouts>;
+  validations: ReturnType<typeof useRolloutValidations>;
+  serverId: string;
+  onServerChange: (id: string) => void;
+  onPrepareServer: () => void;
+  onOpenWorkspace: () => void;
 }) {
-  const rollout = useRollouts();
-  const [serverId, setServerId] = useState('');
   const [instruction, setInstruction] = useState('');
   const [targetLimit, setTargetLimit] = useState('');
   const [timeLimit, setTimeLimit] = useState('');
+  const [attemptCount, setAttemptCount] = useState('');
+  const active = validations.active;
+  const config = active?.session.configuration;
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState('');
   const [checkMessage, setCheckMessage] = useState('');
   const [checkError, setCheckError] = useState('');
-  const [logs, setLogs] = useState({ id: '', content: '', error: '' });
   const selected = rollout.selected;
-  const status = selected?.status;
   const id = selected?.job.id ?? '';
   const ownedServer = rollout.owner?.job.spec.metadata?.server_job_id;
   const ownerMetadata = rollout.owner?.job.spec.metadata;
-  useEffect(() => {
-    onServerInUse(typeof ownedServer === 'string' ? ownedServer : null);
-    return () => onServerInUse(null);
-  }, [ownedServer, onServerInUse]);
-
-  const readySessions = (sessions ?? []).filter((item) =>
-    ['ready', 'serving'].includes(item.state) && ['running', 'queued'].includes(item.job.status)
-    && !item.unreachable && !item.read_error
-    && (item.job.spec.executor === 'local' || item.tunnel?.status === 'running'));
-  const chosenId = (typeof ownedServer === 'string' ? ownedServer : '') || serverId || readySessions[0]?.job.id || '';
+  const readySessions = (sessions ?? []).filter(policySessionReady);
+  const chosenId = (typeof ownedServer === 'string' ? ownedServer : '') || serverId;
   const server = readySessions.find((item) => item.job.id === chosenId);
   const body = { server_job_id: chosenId, instruction: instruction.trim(),
-    max_relative_target: Number(targetLimit), time_limit_s: Number(timeLimit) };
+    max_relative_target: Number(targetLimit), time_limit_s: Number(timeLimit), target_count: Number(attemptCount) };
   const fingerprint = JSON.stringify(body);
-  const blocked = rollout.busy || checking || Boolean(rollout.owner);
+  const blocked = rollout.busy || checking || Boolean(rollout.owner) || Boolean(active) || validations.busy;
   const valid = Boolean(server) && Boolean(body.instruction)
     && Number.isFinite(body.max_relative_target) && body.max_relative_target > 0
-    && Number.isFinite(body.time_limit_s) && body.time_limit_s > 0;
-  const canCheck = valid && !blocked && rollout.items !== null && !rollout.pollError && !sessionError;
+    && Number.isFinite(body.time_limit_s) && body.time_limit_s > 0
+    && Number.isInteger(body.target_count) && body.target_count >= 1 && body.target_count <= 1000;
+  const canCheck = valid && !blocked && rollout.items !== null && !rollout.pollError && !sessionError && validations.items !== null && !validations.pollError;
   const canStart = canCheck && checked === fingerprint;
-  const canStop = Boolean(selected?.owner_alive) && ['connecting', 'running', 'stopping'].includes(selected?.state ?? '')
-    && !rollout.busy;
-  const canRelease = Boolean(selected?.owner_alive) && ['stopped', 'failed', 'aborted'].includes(selected?.state ?? '')
-    && !rollout.busy && !rollout.pollError;
-  const previewActive = Boolean(selected?.owner_alive && selected.state === 'running' && status?.preview_active
-    && !status.preview_error && !rollout.pollError);
-  const cameraNames = Object.keys(status?.frames ?? {});
-
   async function check() {
     if (!canCheck) return;
     setChecking(true);
@@ -60,7 +50,7 @@ export default function RolloutPanel({ sessions, sessionError, onServerInUse }: 
     setCheckMessage('');
     setChecked('');
     try {
-      const result = await checkRollout(body);
+      const result = await checkValidation(body);
       setChecked(fingerprint);
       setCheckMessage(`Settings checked · ${result.server_address} · ${result.checkpoint}`);
     } catch (error) { setCheckError(errorMessage(error)); }
@@ -69,40 +59,25 @@ export default function RolloutPanel({ sessions, sessionError, onServerInUse }: 
 
   async function start() {
     if (!canStart) return;
-    if (await rollout.start(body)) setChecked('');
-  }
-
-  const logActive = Boolean(selected?.owner_alive);
-  useEffect(() => {
-    if (!id) return;
-    const controller = new AbortController();
-    let timer: number | undefined;
-    async function poll() {
-      try {
-        const result = await loadRolloutLog(id, controller.signal);
-        if (!controller.signal.aborted) setLogs({ id, content: result.content, error: '' });
-      } catch (error) {
-        if (!controller.signal.aborted) setLogs({ id, content: '', error: errorMessage(error) });
-      }
-      if (!controller.signal.aborted) timer = window.setTimeout(poll, logActive ? 1000 : 3000);
+    if (await validations.start(body)) {
+      setChecked('');
+      onOpenWorkspace();
     }
-    void poll();
-    return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [id, logActive]);
+  }
 
   return <>
     <section className="run-panel" aria-labelledby="rollout-heading">
       <div className="run-panel-header">
-        <h2 id="rollout-heading">Robot execution</h2>
+        <h2 id="rollout-heading">Rollout settings</h2>
         <span className="run-status">On this machine</span>
       </div>
       <p className="run-description">Start connects to the real follower and cameras. Stop keeps torque and device ownership. Release arm turns torque off and disconnects.</p>
       <div className="run-execution-form">
         <label className="run-field">Policy server session
-          <select value={chosenId} disabled={blocked} onChange={(event) => setServerId(event.target.value)}>
+          <select value={chosenId} disabled={blocked} onChange={(event) => onServerChange(event.target.value)}>
             <option value="">Select a ready session</option>
-            {rollout.owner && !readySessions.some((item) => item.job.id === chosenId)
-              && <option value={chosenId}>{chosenId} · current rollout server</option>}
+            {chosenId && !readySessions.some((item) => item.job.id === chosenId)
+              && <option value={chosenId}>{chosenId} · {rollout.owner ? 'current rollout server' : 'not ready'}</option>}
             {readySessions.map((item) => <option key={item.job.id} value={item.job.id}>
               {item.job.spec.label} · {item.job.spec.executor === 'local' ? 'This machine' : 'GPU host'}
               {item.job.spec.metadata?.mode === 'hold' ? ' · hold' : ' · real'}
@@ -110,79 +85,72 @@ export default function RolloutPanel({ sessions, sessionError, onServerInUse }: 
           </select>
         </label>
         <label className="run-field">Task instruction
-          <textarea rows={2} value={rollout.owner ? String(ownerMetadata?.instruction ?? rollout.owner.session?.task ?? '') : instruction}
+          <textarea rows={2} value={config?.instruction ?? (rollout.owner ? String(ownerMetadata?.instruction ?? rollout.owner.session?.task ?? '') : instruction)}
             disabled={blocked} onChange={(event) => setInstruction(event.target.value)} />
         </label>
         <div className="run-number-fields">
           <label className="run-field">Maximum relative target
-            <input type="number" min="0" step="any" value={rollout.owner ? String(ownerMetadata?.max_relative_target ?? '') : targetLimit} disabled={blocked}
+            <input type="number" min="0" step="any" value={config ? String(config.max_relative_target) : rollout.owner ? String(ownerMetadata?.max_relative_target ?? '') : targetLimit} disabled={blocked}
               onChange={(event) => setTargetLimit(event.target.value)} />
           </label>
           <label className="run-field">Time limit (seconds)
-            <input type="number" min="0" step="any" value={rollout.owner ? String(ownerMetadata?.time_limit_s ?? '') : timeLimit} disabled={blocked}
+            <input type="number" min="0" step="any" value={config ? String(config.time_limit_s) : rollout.owner ? String(ownerMetadata?.time_limit_s ?? '') : timeLimit} disabled={blocked}
               onChange={(event) => setTimeLimit(event.target.value)} />
           </label>
         </div>
       </div>
+      <label className="run-field">Number of attempts
+        <input type="number" min="1" max="1000" step="1" value={active ? String(active.session.target_count) : attemptCount}
+          disabled={blocked} onChange={event => setAttemptCount(event.target.value)} placeholder="e.g. 10" />
+      </label>
+      <p className="run-description">Each attempt starts manually after Release and scene reset. Trials are saved separately under one validation.</p>
       <p className="run-description">Joint limits use degrees; the gripper uses 0–100. Hold returns observed positions and still connects to the real arm.</p>
-      {readySessions.length === 0 && <p className="run-note">Prepare a policy server first. GPU sessions also need a running SSH tunnel.</p>}
+      {!server && <div className="run-note">
+        <p>Prepare a ready policy server first. GPU sessions also need a running SSH tunnel.</p>
+        <button type="button" className="run-button" onClick={onPrepareServer}>Manage policy servers</button>
+      </div>}
       <div className="run-actions">
         <button className="run-button" type="button" disabled={!canCheck} onClick={() => void check()}>
           {checking ? 'Checking…' : 'Check rollout settings'}</button>
         <button className="run-button run-button-primary" type="button" disabled={!canStart} onClick={() => void start()}>
-          {rollout.posting && !selected?.owner_alive ? 'Starting…' : 'Start rollout'}</button>
+          {validations.busy ? 'Starting…' : 'Start validation'}</button>
       </div>
       {checkMessage && checked === fingerprint && <p role="status" className="run-note">{checkMessage}</p>}
       {checkError && <p role="alert">{checkError}</p>}
       {rollout.pollError && <p role="alert">Cannot refresh rollout state: {rollout.pollError}</p>}
       {rollout.actionError && <p role="alert">{rollout.actionError}</p>}
+      {validations.pollError && <p role="alert">Cannot refresh validations: {validations.pollError}</p>}
+      {validations.actionError && <p role="alert">{validations.actionError}</p>}
     </section>
 
-    <section className="run-panel" aria-labelledby="rollout-status-heading">
-      <div className="run-panel-header"><h2 id="rollout-status-heading">Run status</h2>
-        <span className="run-status" role="status">{selected?.state ?? (rollout.items === null ? 'Loading…' : 'Not started')}</span></div>
-      {Boolean(rollout.items?.length) && <label className="run-field">Rollout history
-        <select value={id} disabled={Boolean(rollout.owner) || rollout.busy} onChange={(event) => rollout.select(event.target.value)}>
-          {rollout.items?.map((item) => <option key={item.job.id} value={item.job.id}>{item.job.spec.label} · {item.job.id}</option>)}
-        </select>
-      </label>}
-      <dl className="run-details">
-        <div><dt>Rollout ID</dt><dd>{id || '—'}</dd></div>
-        <div><dt>Instruction</dt><dd>{selected?.session?.task ?? String(selected?.job.spec.metadata?.instruction ?? '—')}</dd></div>
-        <div><dt>Checkpoint / policy identifier</dt><dd>{selected?.session?.checkpoint ?? String(selected?.job.spec.metadata?.checkpoint ?? '—')}</dd></div>
-        <div><dt>Elapsed time</dt><dd>{status ? `${status.elapsed_s.toFixed(1)} s` : '—'}</dd></div>
-        <div><dt>Received chunks / executed actions</dt><dd>{status?.chunks_received ?? 0} / {status?.actions_executed ?? 0}</dd></div>
-        <div><dt>Queued actions</dt><dd>{status?.queue_size ?? '—'}</dd></div>
-        <div><dt>Observation-to-chunk latency</dt><dd>{status?.last_latency_ms == null ? '—' : `${status.last_latency_ms.toFixed(1)} ms`}</dd></div>
-        <div><dt>Queue stalls</dt><dd>{status?.stalls ?? 0}{status?.stalling ? ' · waiting for actions' : ''}</dd></div>
-        <div><dt>Device ownership</dt><dd>{selected?.owner_alive ? 'Retained · Release required' : status?.arm_released ? 'Released' : 'Not confirmed'}</dd></div>
-        <div><dt>End reason</dt><dd>{status?.reason ?? '—'}</dd></div>
-      </dl>
-      {selected?.state === 'ended_unknown' && <p role="alert">The owner process is unavailable. Stop and physical arm state could not be verified.</p>}
-      {selected?.read_error && <p role="alert">{selected.read_error}</p>}
-      {status?.error && <p role="alert">{status.error}</p>}
-      {status?.release_error && <p role="alert">Release failed: {status.release_error}</p>}
+    {validations.selected && <section className="run-panel" aria-label="Validation progress">
+      <div className="run-panel-header"><h2>Validation</h2><span className="run-status">{validationStateLabels[validations.selected.state]}</span></div>
+      <p>{validations.selected.started_count} / {validations.selected.session.target_count} attempts started · {validations.selected.released_count} released · {validations.selected.judged_count} judged</p>
+      <p className="run-description">{validations.selected.session.configuration.instruction}</p>
+      {validations.selected.start_errors.map(item => <p key={item.request_id} role="alert">Could not start attempt: {item.error}</p>)}
+      {validations.selected.unresolved_requests.length > 0 && <p role="alert">An attempt start could not be verified. Inspect robot ownership before ending this validation.</p>}
       <div className="run-actions">
-        <button type="button" className="run-button" disabled={!canStop} onClick={() => void rollout.command('stop')}>Stop execution</button>
-        <button type="button" className="run-button" disabled={!canRelease} onClick={() => void rollout.command('release')}>Release arm (torque off)</button>
+        <button type="button" className="run-button" disabled={validations.busy || !validations.selected.attempts.length}
+          onClick={() => { validations.select(validations.selected!.id); onOpenWorkspace(); }}>Open validation workspace</button>
+        {active && <button type="button" className="run-button" disabled={Boolean(rollout.owner) || rollout.busy || validations.busy || Boolean(validations.pollError)}
+          onClick={() => void validations.end(active)}>End validation</button>}
       </div>
-      {rollout.notice && <p role="status" className="run-note">{rollout.notice}</p>}
-      {selected?.owner_alive && <p className="run-note">Changing pages keeps this rollout connected. Return here to Stop or Release.</p>}
-    </section>
+    </section>}
 
-    <section className="run-panel" aria-labelledby="rollout-camera-heading">
-      <div className="run-panel-header"><h2 id="rollout-camera-heading">Camera preview</h2>
-        <span className="run-status">{previewActive ? 'Observation frames' : 'Inactive'}</span></div>
-      {status?.preview_error && <p role="alert">Preview: {status.preview_error}</p>}
-      {previewActive && id && cameraNames.length > 0 ? <div className="run-cameras">
-        {cameraNames.map((name) => <RolloutCamera key={`${id}:${name}`} jobId={id} name={name} />)}
-      </div> : <div className="run-camera-placeholder">{selected ? 'No live preview · policy is not streaming observations' : 'Start a rollout to view its observations'}</div>}
-    </section>
-
-    <section className="run-panel" aria-labelledby="rollout-log-heading">
-      <h2 id="rollout-log-heading">Execution logs</h2>
-      {logs.id === id && logs.error && <p role="alert">{logs.error}</p>}
-      <pre className="run-log run-execution-log">{!id ? 'No rollout selected.' : logs.id !== id ? 'Loading logs…' : logs.content || 'No log output yet.'}</pre>
+    <section className="run-panel" aria-labelledby="rollout-recent-heading">
+      <div className="run-panel-header"><h2 id="rollout-recent-heading">Recent rollouts</h2>
+        <span className="run-status">{selected?.state ?? (rollout.items === null ? 'Loading…' : 'Not started')}</span></div>
+      {rollout.items?.length ? <>
+        <label className="run-field">Rollout history
+          <select value={id} disabled={Boolean(rollout.owner) || rollout.busy} onChange={event => rollout.select(event.target.value)}>
+            {rollout.items?.map(item => <option key={item.job.id} value={item.job.id}>{item.job.spec.label} · {item.job.id}</option>)}
+          </select>
+        </label>
+        <p className="run-description">{selected?.session?.task ?? String(selected?.job.spec.metadata?.instruction ?? '—')}</p>
+        <div className="run-actions"><button type="button" className="run-button" onClick={onOpenWorkspace}>
+          Open execution workspace
+        </button></div>
+      </> : <p className="run-description">Start a rollout to open its camera and execution workspace.</p>}
     </section>
   </>;
 }

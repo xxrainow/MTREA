@@ -39,6 +39,13 @@ export type PolicySession = {
   tunnel: TrainJob | null;
 };
 
+export function policySessionReady(session: PolicySession) {
+  return ['ready', 'serving'].includes(session.state)
+    && ['running', 'queued'].includes(session.job.status)
+    && !session.unreachable && !session.read_error
+    && (session.job.spec.executor === 'local' || session.tunnel?.status === 'running');
+}
+
 export function startPolicy(body: ServeRequest) {
   return hardwarePost<TrainJob>('/api/serve/start', body);
 }
