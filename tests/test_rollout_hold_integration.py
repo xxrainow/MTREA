@@ -72,12 +72,13 @@ def hold_system(tmp_path):
         wait_for(lambda: read(session / "status.json").get("status") == "ready", processes=[server])
         port = read(session / "status.json")["port"]
 
-        def client(mode):
+        def client(mode, runtime=None):
             trial = tmp_path / "trial"
             client_checkpoint = str(checkpoint) + "-wrong" if mode == "checkpoint_mismatch" else str(checkpoint)
             process = start([
                 sys.executable, "-B", str(REPO / "tests" / "rollout_fake_worker.py"),
                 str(trial), f"127.0.0.1:{port}", client_checkpoint, mode,
+                json.dumps(runtime or {}),
             ], "client")
             return process, trial
 
@@ -90,6 +91,35 @@ def hold_system(tmp_path):
             process.wait(timeout=10)
         for stream in streams:
             stream.close()
+
+
+def test_slow_real_transport_keeps_actions_running_and_cleans_up(hold_system):
+    server, session, start_client, _ = hold_system
+    client, trial = start_client("slow_send", {"send_delay_s": 0.2, "time_limit_s": 30})
+    status_path = trial / "status.json"
+    wait_for(lambda: read(status_path).get("actions_executed", 0) >= 35,
+             processes=[client, server])
+    command = submit_command(trial, "stop")
+    wait_for(lambda: read(trial / "command_results" / f"{command}.json").get("state") == "completed",
+             processes=[client, server])
+    status = read(status_path)
+    assert status["workers_stopped"] and status["hold_command_sent"]
+    sender = status["observation_sender"]
+    assert sender["closed"] and sender["pending"] == 0 and not sender["in_flight"]
+    assert sender["replaced"] > 0 and sender["sent"] > 0
+    timing = status["timing"]
+    assert timing["observation_send"]["mean_ms"] >= 150
+    assert timing["action_interval"]["mean_ms"] < 100
+    tracking = status["joint_tracking"]
+    assert tracking["observed"]["positions"] == tracking["action"]["requested"]
+    assert tracking["action"]["requested"] == tracking["action"]["sent"]
+    assert status["arm_released"] is False
+    release = submit_command(trial, "release")
+    client.wait(timeout=15)
+    assert client.returncode == 0
+    assert read(trial / "command_results" / f"{release}.json")["state"] == "completed"
+    hardware = read(trial / "fake_robot.json")
+    assert hardware["torque_disabled"] and not hardware["bus_connected"]
 
 
 @pytest.mark.parametrize("mode", ["stop", "time_limit", "checkpoint_mismatch", "shape_mismatch", "server_disconnect"])

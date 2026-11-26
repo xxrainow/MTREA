@@ -6,7 +6,7 @@ import {
   appendMetrics, checkpointId, formatDuration, isActiveState, progressPercent, stateLabel,
 } from '../training/model';
 import type { Metric } from '../training/model';
-import TrainingMetricChart from './TrainingMetricChart';
+import TrainingCurves from './TrainingCurves';
 import '../pages/TrainPage.css';
 
 const POLL_MS = 2000;
@@ -119,11 +119,7 @@ export default function TrainRunMonitor({ jobId, onNew, onOpenCheckpoint }: Prop
         : active ? 'Updated every 2 s from the run directory. The run continues on its machine while you are on other pages or reload.'
           : 'Final metrics and logs remain here. Open the final checkpoint or choose New training setup when ready.'}</p>
     </section>
-    <div className="train-grid train-grid-3">
-      <TrainingMetricChart metrics={metrics} kind="loss" fake={fake} />
-      <TrainingMetricChart metrics={metrics} kind="lr" fake={fake} />
-      <TrainingMetricChart metrics={metrics} kind="grad_norm" fake={fake} />
-    </div>
+    <TrainingCurves metrics={metrics} fake={fake} />
     <section className="train-panel"><h2>Job log</h2><pre className="train-log train-live-log">{log || 'No output yet.'}</pre></section>
   </div>;
 }

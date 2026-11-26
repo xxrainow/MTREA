@@ -2,10 +2,10 @@ import type { Metric } from '../training/model';
 import '../pages/TrainPage.css';
 
 type Kind = 'loss' | 'lr' | 'grad_norm';
-type Props = { metrics: Metric[]; kind: Kind; fake?: boolean };
+type Props = { metrics: Metric[]; kind: Kind; fake?: boolean; emptyMessage?: string };
 const titles: Record<Kind, string> = { loss: 'Loss', lr: 'Learning rate', grad_norm: 'Gradient norm' };
 
-export default function TrainingMetricChart({ metrics, kind, fake = false }: Props) {
+export default function TrainingMetricChart({ metrics, kind, fake = false, emptyMessage = 'Waiting for the first logged step…' }: Props) {
   const title = titles[kind];
   const format = (value: number) => kind === 'lr' ? value.toExponential(1) : value.toFixed(3);
   const points = metrics.filter((m): m is Metric & Record<Kind, number> => typeof m[kind] === 'number');
@@ -23,7 +23,7 @@ export default function TrainingMetricChart({ metrics, kind, fake = false }: Pro
   return <section className="train-panel train-metric-panel">
     <div className="train-panel-heading"><h2>{title}</h2><span>{last ? format(last[kind]) : '—'}</span></div>
     <p className="train-note">{fake ? 'Fake run · synthetic values' : 'From metrics.jsonl'} · window averages as lerobot logs them</p>
-    {!last ? <div className="train-metric-empty">Waiting for the first logged step…</div> : <svg viewBox="0 0 500 240" role="img" aria-label={`${title} by training step. Latest step ${last.step}: ${format(last[kind])}`}>
+    {!last ? <div className="train-metric-empty">{emptyMessage}</div> : <svg viewBox="0 0 500 240" role="img" aria-label={`${title} by training step. Latest step ${last.step}: ${format(last[kind])}`}>
       {[0, .5, 1].map(t => { const value = min + (max - min) * t; return <g key={t}><line x1="72" x2="472" y1={y(value)} y2={y(value)} className="train-chart-grid" /><text x="64" y={y(value) + 4} textAnchor="end">{format(value)}</text></g>; })}
       <polyline points={points.map(m => `${x(m.step)},${y(m[kind])}`).join(' ')} className="train-chart-line" />
       <circle cx={x(last.step)} cy={y(last[kind])} r="3" className="train-chart-point" />

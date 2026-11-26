@@ -4,6 +4,7 @@ import { loadCheckpoints, loadRunConfig, loadRuns } from '../api/training';
 import type { CheckpointsResponse } from '../api/training';
 import { checkpointId, parseCheckpointId, sortCheckpoints, stateLabel } from '../training/model';
 import type { CheckpointEntry, RunSummary } from '../training/model';
+import CheckpointTrainingCurves from '../components/CheckpointTrainingCurves';
 import './TrainPage.css';
 import './CheckpointPage.css';
 
@@ -44,6 +45,7 @@ export default function CheckpointPage({ selectedId, onSelect }: Props) {
     const controller = new AbortController();
     Promise.all([loadCheckpoints(runId, controller.signal), loadRunConfig(runId, controller.signal)])
       .then(([nextCheckpoints, nextConfig]) => {
+        if (controller.signal.aborted) return;
         setCheckpoints(nextCheckpoints);
         setConfig(nextConfig.config);
         setError('');
@@ -59,6 +61,7 @@ export default function CheckpointPage({ selectedId, onSelect }: Props) {
   const entries = checkpoints && checkpoints.run_dir === run?.job.spec.run_dir
     ? sortCheckpoints(checkpoints.checkpoints?.checkpoints ?? []) : [];
   const detail = selected && selected.jobId === runId ? entries.find(c => c.step === selected.step) ?? null : null;
+  const lastCheckpoint = entries.find(c => c.last && c.complete);
   const fake = run?.status?.fake ?? run?.job.spec.cmd.includes('--fake') ?? false;
 
   function selectRun(id: string) {
@@ -95,6 +98,7 @@ export default function CheckpointPage({ selectedId, onSelect }: Props) {
             <div><dt>Seed</dt><dd>{run.status?.seed ?? '—'}</dd></div>
             <div><dt>Target</dt><dd>{run.job.spec.executor === 'ssh' ? `GPU host · ${run.job.spec.host ?? ''}` : 'This machine'}</dd></div>
             <div><dt>Job</dt><dd>{run.job.id}</dd></div>
+            <div><dt>Last checkpoint</dt><dd>{lastCheckpoint ? `Step ${lastCheckpoint.step.toLocaleString()}` : '—'}</dd></div>
           </dl>
           {run.unreachable && <p className="train-note" role="status">GPU host unreachable: {run.unreachable}</p>}
           {detail ? <>
@@ -123,6 +127,7 @@ export default function CheckpointPage({ selectedId, onSelect }: Props) {
             </table></div>
             <p className="train-note">Latest step first. Older checkpoints are pruned unless kept with --keep-checkpoints. Checkpoints stay where they were written; nothing is downloaded.</p>
           </>}
+          <CheckpointTrainingCurves key={`${run.job.id}:${refresh}`} jobId={run.job.id} fake={fake} />
         </>}
       </section>
     </div>

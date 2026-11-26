@@ -79,7 +79,7 @@ class FakeRobot:
         return action
 
 
-def create_fake_client(config, lock, trial_dir):
+def create_fake_client(config, lock, trial_dir, *, send_delay_s=0):
     previous = os.getcwd()
     try:
         os.chdir(trial_dir)
@@ -88,11 +88,19 @@ def create_fake_client(config, lock, trial_dir):
         os.chdir(previous)
     original = module.make_robot_from_config
     module.make_robot_from_config = FakeRobot
+
+    class DelayedTransportClient(module.RobotClient):
+        def send_observation(self, observation):
+            if send_delay_s and self.shutdown_event.wait(send_delay_s):
+                return False
+            return super().send_observation(observation)
+
     try:
-        client = create_locked_client(config, lock=lock, client_type=module.RobotClient)
+        client = create_locked_client(config, lock=lock, client_type=DelayedTransportClient)
     finally:
         module.make_robot_from_config = original
 
+    client.instrument_robot_timing()
     release = client.release_arm
 
     def release_and_report():
@@ -136,7 +144,8 @@ def main():
     )
     return run_process(config, trial_dir=Path(trial),
                        time_limit_s=runtime.get("time_limit_s", 1.5 if mode == "time_limit" else 30),
-                       client_factory=create_fake_client,
+                       client_factory=lambda *args: create_fake_client(
+                           *args, send_delay_s=runtime.get("send_delay_s", 0)),
                        lock=HardwareLock(
                            Path(runtime["data_dir"]) / "locks" / "hardware.lock"
                            if "data_dir" in runtime else Path(trial).parent / "test-hardware.lock"))

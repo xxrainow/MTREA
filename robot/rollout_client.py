@@ -18,13 +18,28 @@ from lab.core.hardware.devices import load_arm_config, safe_disconnect
 from lab.core.hardware.lock import HardwareLock
 from robot.config import (
     FPS,
+    JOINT_ORDER,
     POLICY_SERVER_HOST,
     POLICY_SERVER_PORT,
     RolloutGuardrails,
 )
 from robot.rollout_preview import TrialPreview
+from robot.rollout_pacing import ControlPacer
+from robot.rollout_sender import LatestObservationSender
 from robot.rollout_records import TrialRecorder, build_trial_metadata
 from robot.rollout_stalls import QueueStallTracker
+from robot.rollout_timing import RolloutTiming
+
+
+def _joint_positions(values):
+    if not isinstance(values, dict):
+        return {}
+    positions = {}
+    for joint in JOINT_ORDER:
+        value = values.get(f"{joint}.pos", values.get(joint))
+        if isinstance(value, (int, float)) and math.isfinite(value):
+            positions[joint] = float(value)
+    return positions
 
 
 def positive_float(value: str) -> float:
@@ -78,6 +93,8 @@ def build_client_config(args: argparse.Namespace):
         raise ValueError("task must not be empty")
     if not math.isfinite(args.threshold):
         raise ValueError("threshold must be finite")
+    if args.fps <= 0:
+        raise ValueError("fps must be positive")
 
     from lerobot.async_inference.configs import RobotClientConfig
     from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -139,6 +156,13 @@ def create_locked_client(
             self._last_latency_ms = None
             self._max_latency_ms = None
             self._stalls = QueueStallTracker(RolloutGuardrails().queue_starved_ms)
+            self._timing = RolloutTiming()
+            self._capture_generation = None
+            self._control_deadlines_skipped = 0
+            self._last_observed_positions = None
+            self._last_measured_positions = None
+            self._last_action_targets = None
+            self._clamped_actions = 0
 
             try:
                 super().__init__(config)
@@ -153,6 +177,12 @@ def create_locked_client(
                     "rollout client initialization",
                 )
                 raise
+
+            self._observation_sender = LatestObservationSender(
+                self._send_observation_now,
+                max_age_s=RolloutGuardrails().max_pending_observation_age_seconds,
+                on_queue_wait=lambda seconds: self._timing.record("observation_queue_wait", seconds),
+            )
 
         @property
         def running(self):
@@ -170,17 +200,91 @@ def create_locked_client(
             return accepted
 
         def control_loop_action(self, verbose=False):
+            requested = time.perf_counter()
             with self._io_lock:
                 if self._stop_requested.is_set():
                     return {}
+                self._timing.record("action_lock_wait", time.perf_counter() - requested)
 
-                result = super().control_loop_action(verbose)
+                with self._timing.measure("action_total"):
+                    result = super().control_loop_action(verbose)
 
                 with self._stats_lock:
                     self._actions_executed += 1
 
                 self._stalls.action_executed()
+                self._timing.action_completed()
                 return result
+
+        def control_loop(self, task, verbose=False):
+            self.start_barrier.wait()
+            pacer = ControlPacer(self.config.fps)
+            observation = action = None
+            while self.running:
+                self._timing.record("control_tick_lateness", pacer.lateness())
+                if self.actions_available():
+                    action = self.control_loop_action(verbose)
+                if self.running and self._ready_to_send_observation():
+                    observation = self.control_loop_observation(task, verbose)
+                stopped = pacer.wait_next(self.shutdown_event)
+                with self._stats_lock:
+                    self._control_deadlines_skipped = pacer.skipped
+                if stopped:
+                    break
+            return observation, action
+
+        def instrument_robot_timing(self):
+            read_observation = self.robot.get_observation
+            send_action = self.robot.send_action
+            read_bus = self.robot.bus.sync_read
+
+            def read_positions(*args, **kwargs):
+                result = read_bus(*args, **kwargs)
+                register = args[0] if args else kwargs.get("data_name")
+                if register == "Present_Position" and kwargs.get("normalize", True):
+                    positions = _joint_positions(result)
+                    if positions:
+                        with self._stats_lock:
+                            self._last_measured_positions = {
+                                "timestamp": time.time(), "positions": positions,
+                            }
+                return result
+
+            def observed():
+                result = read_observation()
+                positions = _joint_positions(result)
+                if positions:
+                    with self._stats_lock:
+                        self._last_observed_positions = {
+                            "timestamp": time.time(), "positions": positions,
+                        }
+                return result
+
+            def commanded(action):
+                requested = _joint_positions(action)
+                result = send_action(action)
+                sent = _joint_positions(result)
+                if requested:
+                    clamped = any(abs(requested[j] - sent[j]) > 1e-6
+                                  for j in requested.keys() & sent.keys())
+                    with self._stats_lock:
+                        self._clamped_actions += int(clamped)
+                        self._last_action_targets = {
+                            "timestamp": time.time(), "requested": requested,
+                            "sent": sent or None,
+                        }
+                return result
+
+            self.robot.get_observation = observed
+            self.robot.send_action = commanded
+            self.robot.bus.sync_read = read_positions
+            self._timing.wrap(self.robot, "get_observation", "observation_read")
+            self._timing.wrap(self.robot, "send_action", "robot_send_action")
+            self._timing.wrap(self.robot.bus, "sync_read", "serial_read")
+            self._timing.wrap(self.robot.bus, "sync_write", "serial_write")
+            for name, camera in self.robot.cameras.items():
+                method = "read_latest" if callable(getattr(camera, "read_latest", None)) else "async_read"
+                self._timing.wrap(camera, method, f"camera_read:{name}")
 
         def _aggregate_action_queues(
             self, incoming_actions, aggregate_fn=None
@@ -196,6 +300,10 @@ def create_locked_client(
             )
 
             if incoming_actions:
+                with self.action_queue_lock:
+                    refilled = not self.action_queue.empty()
+                if refilled:
+                    self._observation_sender.invalidate_pending()
                 with self._stats_lock:
                     self._chunks_received += 1
 
@@ -224,18 +332,34 @@ def create_locked_client(
                     "queue_size": queue_size,
                     "last_latency_ms": self._last_latency_ms,
                     "max_latency_ms": self._max_latency_ms,
+                    "control_deadlines_skipped": self._control_deadlines_skipped,
+                    "joint_tracking": {
+                        "observed": self._last_observed_positions,
+                        "measured": self._last_measured_positions,
+                        "action": self._last_action_targets,
+                        "clamped_actions": self._clamped_actions,
+                    },
                 }
             snapshot.update(self._stalls.snapshot())
+            snapshot["timing"] = self._timing.snapshot()
+            snapshot["observation_sender"] = self._observation_sender.snapshot()
             return snapshot
 
         def stall_events(self) -> list[dict]:
             return self._stalls.poll()
 
         def control_loop_observation(self, task, verbose=False):
+            requested = time.perf_counter()
             with self._io_lock:
                 if self._stop_requested.is_set():
                     return None
-                return super().control_loop_observation(task, verbose)
+                self._timing.record("observation_lock_wait", time.perf_counter() - requested)
+                self._capture_generation = self._observation_sender.generation()
+                try:
+                    with self._timing.measure("observation_total"):
+                        return super().control_loop_observation(task, verbose)
+                finally:
+                    self._capture_generation = None
 
         def send_observation(self, observation):
             if self._stop_requested.is_set():
@@ -246,11 +370,27 @@ def create_locked_client(
                     observation.get_observation(),
                     captured_at=observation.get_timestamp(),
                 )
-            return super().send_observation(observation)
+            with self._timing.measure("observation_enqueue"):
+                return self._observation_sender.submit(
+                    observation, generation=self._capture_generation,
+                )
+
+        def send_observations(self):
+            self._observation_sender.run()
+
+        def _send_observation_now(self, observation):
+            if self._stop_requested.is_set():
+                return False
+            with self._timing.measure("observation_send"):
+                sent = super().send_observation(observation)
+            if not sent and self.running:
+                raise PolicyConnectionError("Error sending observation: transport refused or failed")
+            return sent
 
         def stop(self):
             self._stop_requested.set()
             self.shutdown_event.set()
+            self._observation_sender.close()
             self._stalls.finish()
 
             try:
@@ -391,6 +531,7 @@ def run_policy(
 
         for target in (
             client.receive_actions,
+            client.send_observations,
             lambda: client.control_loop(task=task),
         ):
             thread = Thread(
@@ -398,8 +539,8 @@ def run_policy(
                 args=(target,),
                 daemon=True,
             )
-            thread.start()
             workers.append(thread)
+            thread.start()
 
         while True:
             if stop_requested.is_set():
