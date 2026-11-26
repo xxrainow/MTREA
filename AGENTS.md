@@ -481,6 +481,33 @@ review; nobody pushes to main directly.
   The rollout-based revision additionally verifies that matching instructions
   remain separate runs, repeated attempts are not split into duplicate entries,
   legacy runs contain one attempt each and selection survives reload.
+  Result details now follow Datasets: a top back link above the instruction/title,
+  summary strip, policy/limits panel, left Attempts selector and right selected
+  attempt content. Whole result rows (including keyboard Enter/Space) or their date
+  button open details. The back link uses normal text color by default and orange
+  accent on hover/focus. Delete is reversible result-list archival, confirmed in
+  the UI; `data/rollouts/result_archive.jsonl` appends archive/restore events without
+  changing trial/session/validation files or removing Jobs/control history. Show
+  deleted exposes archived results and Restore; archived outcomes are read-only
+  until restored. `/api/rollout-results/archive` GET/POST and `/restore` POST use
+  local state only. Live/queued owners and unfinished validations cannot be
+  archived, and linked attempts cannot be archived separately from their batch.
+  Tests verify source bytes stay unchanged, archive idempotency/recovery, restore,
+  active-state refusals and torn-append protection. Isolated synthetic browser
+  checks verify cell/row navigation, Attempt selection, deletion persistence and
+  restore. Build/lint and related backend/frontend tests pass; no real records
+  were archived during development.
 
 This file is the project's memory across sessions. When a decision is made or
 reversed update this file in the same change, or the next session will repeat the mistake.
+
+- Rollout results has Merge then Delete in its detail header; no Edit or manual
+  Refresh button. The catalog polls every two seconds and retries failed reads.
+  Merge creates an immutable named bundle under `rollouts/merged/`, referencing
+  original job IDs and snapshotting their manual outcomes/notes and source attempt
+  numbers. It requires at least two closed, nondeleted results with equal recorded
+  checkpoint, instruction and execution settings, and rejects duplicate attempts.
+  Source trials, validations and judgments stay unchanged; later source annotations
+  do not rewrite a merged report. Merged outcomes are read-only. Merge supports
+  validation runs, historical singles and prior bundles. Deleting/restoring a
+  bundle uses the existing append-only result archive, preserving its sources.

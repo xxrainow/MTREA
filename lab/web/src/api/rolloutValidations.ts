@@ -33,3 +33,19 @@ export const nextValidationAttempt = (id: string, number: number, requestId: str
 export const endValidation = (id: string) => hardwarePost<RolloutValidation>(`${base}/${encodeURIComponent(id)}/end`);
 export const saveValidationOutcome = (id: string, jobId: string, outcome: Outcome, notes: string) =>
   hardwarePost<RolloutValidation>(`${base}/${encodeURIComponent(id)}/outcome`, { job_id: jobId, outcome, notes });
+
+export type ArchivedResult = { kind: 'validation' | 'standalone' | 'merged'; id: string };
+export const loadResultArchive = (signal?: AbortSignal) =>
+  hardwareRequest<{ archived: ArchivedResult[] }>('/api/rollout-results/archive', { signal });
+export const changeResultArchive = (result: ArchivedResult, restore = false) =>
+  hardwarePost<{ archived: ArchivedResult[] }>(`/api/rollout-results/${restore ? 'restore' : 'archive'}`, result);
+
+export type MergedResult = {
+  id: string; name: string; created_at: string; target_count: number;
+  condition: { instruction: string; checkpoint: string; mode: string; time_limit_s: number; max_relative_target: number };
+  attempts: (ValidationAttempt & { source: ArchivedResult & { number: number } })[];
+  intent: { sources: ArchivedResult[]; name: string }; git_commit: string | null;
+};
+export const loadMergedResults = (signal?: AbortSignal) => hardwareRequest<MergedResult[]>('/api/rollout-results/merged', { signal });
+export const mergeResults = (sources: ArchivedResult[], name: string, requestId: string) =>
+  hardwarePost<MergedResult>('/api/rollout-results/merge', { sources, name, request_id: requestId });
